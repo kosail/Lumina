@@ -1,0 +1,30 @@
+Raspberry Pi Zero 2 W is the latest product in our most affordable range of single-board computers. The successor to the breakthrough Raspberry Pi Zero W, Raspberry Pi Zero 2 W is a form factor–compatible drop-in replacement for the original board. The board incorporates a quad-core 64-bit Arm Cortex-A53 CPU, clocked at 1GHz.
+
+At its heart is a Raspberry Pi RP3A0 system-in-package (SiP), integrating a Broadcom BCM2710A1 die with 512MB of LPDDR2 SDRAM. The upgraded processor provides Raspberry Pi Zero 2 W with 40% more single-threaded performance, and five times more multi-threaded performance, than the original single-core Raspberry Pi Zero.
+
+Raspberry Pi Zero 2 W offers 2.4GHz 802.11 b/g/n wireless LAN and Bluetooth 4.2, along with support for Bluetooth Low Energy (BLE), and modular compliance certification.
+
+The board has a microSD card slot, a CSI-2 camera connector, a USB On-The-Go (OTG) port, and an unpopulated footprint for a HAT-compatible 40-pin GPIO header. It is powered via a micro USB socket. Video output is via a mini HDMI port; composite video output can easily be made available via test points if needed. Sharing the same form factor as the original Raspberry Pi Zero, Raspberry Pi Zero 2 W fits inside most existing Raspberry Pi Zero cases.
+
+Specification
+Form factor: 65mm×30mm
+Processor: Broadcom BCM2710A1, quad-core 64-bit SoC (Arm Cortex-A53 @ 1GHz)
+Memory: 512MB LPDDR2
+Connectivity:
+- 2.4GHz IEEE 802.11b/g/n wireless LAN, Bluetooth 4.2, BLE, onboard antenna
+- 1 × USB 2.0 interface with OTG
+- HAT-compatible 40-pin I/O header footprint
+- microSD card slot
+- Mini HDMI port
+- CSI-2 camera connector
+Video:
+- HDMI interface
+- Composite video
+Multimedia:
+- H.264, MPEG-4 decode (1080p30)
+- H.264 encode (1080p30)
+- OpenGL ES 1.1, 2.0 graphics
+Input power: 5V DC 2.5A
+Operating temperature: -20°C to +70°C
+Production lifetime: Raspberry Pi Zero 2 W will remain in production until at least January 2030
+Compliance: For a full list of local and regional product approvals, please visit pip.raspberrypi.com

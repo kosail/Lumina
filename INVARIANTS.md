@@ -1,0 +1,521 @@
+# INVARIANTS.md — Lúmina Beta Runtime
+
+> **Rank: 1 (HIGHEST).** This file outranks `SPECS.md`, `RAW_PLAN.md`, `AGENTS.md`,
+> any code comment, and any suggestion made by an AI agent or a human contributor.
+>
+> The entries below are facts and decisions that **MUST NOT be violated or silently changed**.
+> They are the foundation of the project architecture.
+
+---
+
+## 0. How to read this file
+
+Each invariant has:
+
+- **ID** — stable identifier, never reused.
+- **Severity** — one of `CORE`, `HARD`, `SCOPE`, `TARGET`, `PROCESS` (see legend).
+- **Statement** — the rule itself.
+- **Rationale** — *why* it exists (so a future agent does not "optimize it away").
+- **Source** — where it came from (user instruction, hardware datasheet, RAW_PLAN, research).
+- **Changeability** — what it would take to change it.
+
+### Severity legend
+
+| Severity  | Meaning |
+|-----------|---------|
+| `CORE`    | Meta-rule that governs **all** work and every other invariant. |
+| `HARD`    | Platform/hardware/stack fact. Changing it means changing hardware or the runtime stack. |
+| `SCOPE`   | Beta deliverable decision. Changing it changes what is shipped on deadline. |
+| `TARGET`  | Measurable goal. Deviation is allowed only if reported and approved. |
+| `PROCESS` | Workflow rule for agents. |
+
+### Change protocol (mandatory)
+
+1. **Never silently change an invariant.** If a task appears to require it, **STOP and ask the user**.
+2. Any accepted change requires: explicit human approval **and** an append-only entry in `CHANGELOG.md`.
+3. Changed invariants are never rewritten in place without leaving a trace — supersede with a new
+   ID or an explicit "amended by CHG-XXXX" note.
+4. If two invariants appear to conflict, **stop and ask the user**; do not pick one.
+
+---
+
+## 1. CORE invariants (meta-rules)
+
+### INV-001 — NEVER ASSUME  🟥 `CORE`
+
+**Statement.** Never assume anything.
+- Always consult the **latest official documentation online** before using an API, library,
+  file format, model format, or hardware behavior.
+- If the documentation lookup **fails**, or confidence in an answer/decision is **below `0.80`**,
+  **STOP and ask the user**. Do not guess, do not "try it and see", do not proceed on memory.
+
+**Rationale.** This project targets constrained, unusual hardware (RPi Zero 2W) with fast-moving
+libraries (NCNN, libcamera, OpenCV, Piper). Assumptions here are the single largest source of
+wasted days and silent breakage. A confidently wrong assumption is worse than an explicit question.
+
+**Operationalization.**
+- External facts must be backed by a source: **URL + access date**, recorded in comments/docs.
+- Self-assessed confidence must be explicit when it is not obvious from a cited source.
+- Asking is always allowed and never counts as failure.
+
+**Source.** Direct user instruction (2026-09-15).
+
+**Changeability.** Not changeable without the user explicitly revoking the instruction.
+
+---
+
+### INV-002 — Invariants outrank everything  🟥 `CORE`
+
+**Statement.** This file is the highest source of truth. No agent, plan, requirement, or code
+may contradict it. Where sources conflict, this file wins.
+
+**Rationale.** Without a single immutable foundation, architecture drifts silently between agents.
+
+**Source.** User instruction defining this file's role.
+
+**Changeability.** Only via the change protocol above.
+
+---
+
+### INV-003 — On-device and offline by default  🟥 `CORE`
+
+**Statement.** All core functionality runs locally on the device with **no network dependency**.
+No cloud calls, no external services, no telemetry unless `LUMINA_ENABLE_TELEMETRY=ON` and the
+user has explicitly requested it. Privacy of the user's camera stream is preserved by design.
+
+**Rationale.** Core product promise (edge AI, privacy, works without connectivity) and the
+dossier's central differentiator.
+
+**Source.** `AGENTS.md` project brief / `RAW_PLAN.md`.
+
+**Changeability.** Requires user approval; contradicts the product's core value proposition.
+
+---
+
+## 2. HARDWARE invariants
+
+### INV-010 — Target hardware is the Raspberry Pi Zero 2 W  `HARD`
+
+**Statement.** The runtime must run well on: Broadcom BCM2710A1, **quad-core 64-bit Arm
+Cortex-A53 @ 1 GHz**, **512 MB LPDDR2**, CSI-2 camera, single USB OTG, microSD, no analog audio.
+
+**Rationale.** This is the physical device already owned and demonstrated.
+
+**Source.** `RPI_2W_SPECSHEET.txt`.
+
+**Changeability.** Not without different hardware.
+
+---
+
+### INV-011 — Camera is an OV5647 5 MP, 135°, IR-CUT  `HARD`
+
+**Statement.** Capture uses the **OV5647** sensor via **libcamera**: 5 MP, 1/4", 130–135°
+diagonal, **auto IR-CUT (75/175)**, **fixed manually-adjustable focus**. Wide-angle barrel
+distortion is expected; detection/face work on a **central ROI** unless undistortion is added.
+
+**Rationale.** This is the purchased camera; it is the only camera.
+
+**Source.** User-provided seller specification (2026-09-15).
+
+**Changeability.** Not without different hardware.
+
+---
+
+### INV-012 — Cortex-A53 has NO INT8 dot-product acceleration  `HARD`
+
+**Statement.** The A53 is ARMv8.0-A: NEON exists, but SDOT/UDOT (ARMv8.2 int8 dot-product) do
+**not**. Therefore INT8 quantization must **not** be assumed to give large speedups.
+**Default precision is FP16**, and INT8 is adopted only if on-device benchmarks prove a win.
+
+**Rationale.** Prevents repeating the dossier's speculative "4× INT8" claim as if it were fact.
+
+**Source.** ARM architecture facts + `RAW_PLAN.md` §2; research (Ultralytics Pi benchmarks).
+
+**Changeability.** Not changeable (hardware); the precision choice is measured, not assumed.
+
+---
+
+### INV-013 — No proximity sensor is present  `SCOPE`
+
+**Statement.** The current hardware bundle contains **no distance/proximity sensor** (the IR
+module is an illuminator + IR-CUT filter). Proximity is therefore **disabled by default** but
+**must remain modular** behind `IProximitySensor` (`NullProximitySensor` today), so a future
+VL53L0X / E18 / TCRT5000 can be added without architectural change.
+
+**Rationale.** Keeps the door open for the intended work-reduction/safety feature without
+blocking the beta. See `RAW_PLAN.md` §5.
+
+**Source.** User confirmation (2026-09-15); `RAW_PLAN.md` INV11.
+
+**Changeability.** Flip `LUMINA_ENABLE_PROXIMITY` when hardware is acquired.
+
+---
+
+### INV-014 — Exactly one Bluetooth audio device  `HARD`
+
+**Statement.** The **only** Bluetooth device ever connected is the bone-conduction earbuds,
+already paired, output via **A2DP**. The runtime must assume a single sink and must not manage
+other Bluetooth devices.
+
+**Rationale.** Simplifies audio routing and matches the physical setup.
+
+**Source.** User instruction (invariant 6).
+
+**Changeability.** By user approval.
+
+---
+
+### INV-015 — Thermal headroom is not a concern  `HARD`
+
+**Statement.** The Pi is in a solid aluminum case and observed ~30 °C under normal load. Thermal
+throttling is **not** the primary constraint; **memory bandwidth and CPU** are. Do not spend time
+on exotic cooling; still avoid needless sustained load.
+
+**Rationale.** Directs engineering effort to the real bottlenecks.
+
+**Source.** User instruction (invariant 7).
+
+**Changeability.** By user approval.
+
+---
+
+## 3. PLATFORM / BUILD invariants
+
+### INV-020 — Language is C++20  `HARD`
+
+**Statement.** Production code is **C++20** (not C++23). C++23 features (`std::expected`,
+`std::print`, `std::mdspan`, `std::stacktrace`) must not be used. CMake ≥ 3.20.
+
+**Rationale.** GCC on Pi OS Bookworm is GCC 12, which is C++20-complete but only partially
+C++23; the user explicitly selected C++20. See `RAW_PLAN.md` §7.
+
+**Source.** User instruction (2026-09-15) + `RAW_PLAN.md`.
+
+**Changeability.** Requires user approval and a toolchain upgrade.
+
+---
+
+### INV-021 — Headless operation  `HARD`
+
+**Statement.** The runtime is **headless**: no desktop, no GUI, no OpenCV HighGUI window.
+Debug rendering, if any, is behind a compile-time flag and must not run in the shipped path.
+
+**Rationale.** Frees RAM/CPU on a 512 MB device; the nightly's dual-panel UI is a pitch artifact.
+
+**Source.** `RAW_PLAN.md`; `FIRST_IMPRESSIONS_ON_NIGHTLY_VERSION.md`.
+
+**OS specifics.** Defined in `INV-024` (added by CHG-0004).
+
+**Changeability.** By user approval.
+
+---
+
+### INV-022 — Fixed runtime stack  `HARD`
+
+**Statement.** The runtime uses only: **NCNN** (inference), **libcamera** (capture), **OpenCV**
+(`objdetect`: YuNet + SFace; image ops), **libpiper + espeak-ng** (TTS), **ALSA → bluealsa**
+(audio), **BlueZ** (Bluetooth). Adding any **new runtime dependency** requires explicit approval.
+
+**Rationale.** Each new dependency costs build time, RAM, and licensing review on a 6-day budget.
+
+**Source.** `RAW_PLAN.md` §1.
+
+**Changeability.** By user approval.
+
+---
+
+### INV-023 — Cross-compile; no heavy native builds  `PROCESS`
+
+**Statement.** Build on the laptop with an aarch64 sysroot. Do **not** run heavy native builds on
+the Zero 2W (512 MB causes OOM and takes hours); native build is a last-resort fallback only.
+
+**Rationale.** Build time is the project's #1 schedule risk.
+
+**Source.** `RAW_PLAN.md` §7 / §11.
+
+**Changeability.** By user approval.
+
+---
+
+### INV-024 — Target OS is Raspberry Pi OS Lite 64-bit  `HARD`
+
+**Statement.** The runtime target is **Raspberry Pi OS Lite 64-bit** (glibc, aarch64).
+**DietPi 64-bit** is the only permitted alternative, and only as a **post-gate optimization**
+(after the end-of-Day-2 GO/NO-GO gate) if memory pressure requires it. **Alpine/musl is explicitly
+rejected** for the beta.
+
+**Rationale.** The OV5647 ISP/libcamera stack and the glibc-only `onnxruntime` that `libpiper`
+links are the reference-supported path on Pi OS; Alpine/musl risks camera and TTS bring-up and
+would require rebuilding dependencies — unacceptable on the 6-day budget (INV-071). DietPi is
+Debian/glibc over the Raspberry Pi kernel, so it stays compatible while trimming background
+services (helps INV-052). See CHG-0004.
+
+**Source.** User decision (2026-09-15).
+
+**Changeability.** Requires user approval; changes the cross-compile sysroot and CHANGELOG.
+
+---
+
+## 4. ARCHITECTURE invariants
+
+### INV-030 — Interface-first and dependency injection  `HARD`
+
+**Statement.** Hardware and external systems are accessed only through interfaces
+(`ICamera`, `IDetector`, `IFaceRecognizer`, `ITtsEngine`, `IAudioSink`, `IProximitySensor`).
+Concrete implementations are injected. Logic must be unit-testable with mocks and **no hardware**.
+
+**Rationale.** Testability, decoupling, and host-side development without the Pi.
+
+**Source.** User instruction (modular/testable/decoupled).
+
+**Changeability.** By user approval.
+
+---
+
+### INV-031 — Bounded queues; never block capture  `HARD`
+
+**Statement.** Inter-thread communication uses **bounded** queues. Capture must never block on
+inference; stale frames are dropped (depth 1 for the inference handoff).
+
+**Rationale.** Real-time behavior on a slow CPU; mirrors and fixes the nightly's architecture.
+
+**Source.** `RAW_PLAN.md` §3.
+
+**Changeability.** By user approval.
+
+---
+
+### INV-032 — Safety alerts preempt descriptions  `HARD`
+
+**Statement.** The alert arbiter orders by safety priority; an obstacle/collision alert
+preempts an in-progress spoken description. Speech is interruptible.
+
+**Rationale.** Latency of a safety warning is a physical-safety concern, not a UX nicety.
+Fixes the nightly's unbounded-queue / non-interruptible-TTS defect.
+
+**Source.** `FIRST_IMPRESSIONS_ON_NIGHTLY_VERSION.md` §9; `RAW_PLAN.md` §3.
+
+**Changeability.** By user approval.
+
+---
+
+### INV-033 — Proximity is a modular, disabled extension  `HARD`
+
+**Statement.** `IProximitySensor` + `NullProximitySensor` + a factory are part of the code, but
+the feature is compiled out by default (`LUMINA_ENABLE_PROXIMITY=OFF`). With the null sensor the
+runtime behaves exactly as the no-proximity beta.
+
+**Rationale.** Forward compatibility without scope creep (see INV-013).
+
+**Source.** User instruction (2026-09-15); `RAW_PLAN.md` §5.
+
+**Changeability.** Toggle the CMake option.
+
+---
+
+### INV-034 — Telemetry is deferred, optional, and off the core path  `HARD`
+
+**Statement.** Telemetry is `OFF` by default (`LUMINA_ENABLE_TELEMETRY=OFF`). If enabled, it runs
+in a low-priority thread using stateless UDP datagrams, never blocking detection, alerts, or
+audio. It is implemented only after all core features pass (Day 6).
+
+**Rationale.** Must not regress core runtime performance; user's explicit condition.
+
+**Source.** User instruction (invariant 9); `RAW_PLAN.md` §10.
+
+**Changeability.** By user approval.
+
+---
+
+## 5. FEATURE SCOPE invariants
+
+### INV-040 — Beta features are fixed  `SCOPE`
+
+**Statement.** The beta delivers: (1) object/animal/person detection narrated in Spanish;
+(2) prioritized obstacle alerts; (3) **face recognition of 3–4 enrolled people**. Nothing else is
+in scope for Day 6.
+
+**Rationale.** 6-day deadline with a mandatory GO/NO-GO gate; scope control is survival.
+
+**Source.** User instruction (invariant 3); `RAW_PLAN.md` §8.
+
+**Changeability.** By user approval.
+
+---
+
+### INV-041 — Face recognition, NOT currency; no navigation  `SCOPE`
+
+**Statement.** The single extra feature is **face recognition**. Currency recognition and offline
+navigation are explicitly **out of scope** for the beta. Indigenous-language support is post-beta.
+
+**Rationale.** Currency needs a custom dataset and is degraded by IR/color handling; navigation
+and indigenous-language NLP do not fit the deadline. See `RAW_PLAN.md` §5 / research.
+
+**Source.** User decision (2026-09-15).
+
+**Changeability.** By user approval.
+
+---
+
+### INV-042 — Spanish only  `SCOPE`
+
+**Statement.** All speech output and commands are **Spanish (es_MX)** using the existing Piper
+voice family. No other locale is shipped in the beta.
+
+**Rationale.** The product is Spanish-first by design; matches the existing assets.
+
+**Source.** User instruction (invariant 12).
+
+**Changeability.** By user approval.
+
+---
+
+## 6. PERFORMANCE / LATENCY invariants
+
+### INV-050 — Inference throughput  `TARGET`
+
+**Statement.** Detection runs at **≥ 5 FPS** at 320 px (or 416 px) input on the target device,
+with inference decimated (not every frame).
+
+**Rationale.** Minimum viable guidance rate for walking; derived from `RAW_PLAN.md` §2 estimates.
+
+**Source.** `RAW_PLAN.md` §2/§8.
+
+**Changeability.** Report and get approval if the measured best is lower.
+
+---
+
+### INV-051 — End-to-end spoken-alert latency  `TARGET`
+
+**Statement.** Target **< 600 ms** from event to audible alert (camera → inference → arbiter →
+TTS → Bluetooth). Bluetooth alone is expected to add ~150–300 ms.
+
+**Rationale.** Safety usability; `RAW_PLAN.md` §3/§9.
+
+**Source.** `RAW_PLAN.md`.
+
+**Changeability.** Report and get approval.
+
+---
+
+### INV-052 — Memory budget  `TARGET`
+
+**Statement.** Resident set stays **under ~450 MB** (512 MB total). Prefer the low-RAM face
+embedder (MobileFaceNet) over SFace if pressure appears.
+
+**Rationale.** 512 MB is the binding constraint.
+
+**Source.** `RAW_PLAN.md` §1/§11.
+
+**Changeability.** Report and get approval.
+
+---
+
+### INV-053 — Startup readiness  `TARGET`
+
+**Statement.** From power-on to "ready" (models loaded, Bluetooth audio connected) within
+**~30 s**.
+
+**Rationale.** Demo and field usability.
+
+**Source.** `RAW_PLAN.md` (boot-time BT autoconnect requirement).
+
+**Changeability.** Report and get approval.
+
+---
+
+## 7. LICENSING invariants
+
+### INV-060 — GPL-3.0 in the TTS stack is a known, accepted risk  `HARD`
+
+**Statement.** Piper (`piper1-gpl`) and `espeak-ng` are **GPL-3.0**. This is acceptable for the
+contest beta, but it is a **productization blocker** that must be resolved (relicense, isolate, or
+replace the TTS) before any commercial distribution.
+
+**Rationale.** Prevents an accidental commercial release with copyleft contamination.
+
+**Source.** Research (libpiper/piper1-gpl licensing); `RAW_PLAN.md` §11.
+
+**Changeability.** Informational; the risk status changes as the product matures.
+
+---
+
+## 8. PROCESS invariants
+
+### INV-070 — Every meaningful change is logged  `PROCESS`
+
+**Statement.** Every design decision and meaningful code change appends an entry to
+`CHANGELOG.md` in the mandated YAML-block format. The log is **append-only**; history is never
+rewritten, only superseded.
+
+**Rationale.** Lets future agents reconstruct *why* without re-reading the repo.
+
+**Source.** User instruction defining `CHANGELOG.md`.
+
+**Changeability.** By user approval.
+
+---
+
+### INV-071 — Deadline and gate  `PROCESS`
+
+**Statement.** The beta has a **6-day** budget (competition in 7). There is a mandatory
+**GO/NO-GO gate at the end of Day 2**: camera → NCNN → Piper → Bluetooth must work end-to-end.
+If it fails, the fallback is the hardened Python nightly for the demo.
+
+**Rationale.** Prevents betting the demo on an unfinished runtime.
+
+**Source.** User instruction (invariant 5); `RAW_PLAN.md` §8.
+
+**Changeability.** By user approval.
+
+---
+
+### INV-072 — Modular, testable, decoupled, fully commented  `PROCESS`
+
+**Statement.** Code is modular, easy to test, and easy to decouple. **Everything is commented.**
+The primary maintainer is a Java developer returning to C++ after ~2 years, so comments must also
+explain C++-specific constructs (pointers, RAII/ownership, move semantics, header/source split)
+where they differ from Java.
+
+**Rationale.** Explicit user requirement; maintainability by a small team on a deadline.
+
+**Source.** User instruction (2026-09-15).
+
+**Changeability.** By user approval.
+
+---
+
+## 9. Index
+
+| ID       | Severity | Title |
+|----------|----------|-------|
+| INV-001  | CORE     | NEVER ASSUME |
+| INV-002  | CORE     | Invariants outrank everything |
+| INV-003  | CORE     | On-device and offline by default |
+| INV-010  | HARD     | Target hardware is the RPi Zero 2 W |
+| INV-011  | HARD     | Camera is OV5647 5 MP, 135°, IR-CUT |
+| INV-012  | HARD     | Cortex-A53 has no INT8 dot-product |
+| INV-013  | SCOPE    | No proximity sensor present (modular hook) |
+| INV-014  | HARD     | Exactly one Bluetooth audio device |
+| INV-015  | HARD     | Thermal headroom is not a concern |
+| INV-020  | HARD     | Language is C++20 |
+| INV-021  | HARD     | Headless operation |
+| INV-022  | HARD     | Fixed runtime stack |
+| INV-023  | PROCESS  | Cross-compile; no heavy native builds |
+| INV-024  | HARD     | Target OS is Raspberry Pi OS Lite 64-bit |
+| INV-030  | HARD     | Interface-first and dependency injection |
+| INV-031  | HARD     | Bounded queues; never block capture |
+| INV-032  | HARD     | Safety alerts preempt descriptions |
+| INV-033  | HARD     | Proximity is modular and disabled |
+| INV-034  | HARD     | Telemetry deferred, optional, off core path |
+| INV-040  | SCOPE    | Beta features are fixed |
+| INV-041  | SCOPE    | Face recognition, NOT currency; no navigation |
+| INV-042  | SCOPE    | Spanish only |
+| INV-050  | TARGET   | Inference throughput ≥ 5 FPS @320/416 |
+| INV-051  | TARGET   | Spoken-alert latency < 600 ms |
+| INV-052  | TARGET   | Memory < ~450 MB |
+| INV-053  | TARGET   | Startup ready in ~30 s |
+| INV-060  | HARD     | GPL-3.0 TTS risk accepted for beta |
+| INV-070  | PROCESS  | Every meaningful change is logged |
+| INV-071  | PROCESS  | 6-day deadline and Day-2 gate |
+| INV-072  | PROCESS  | Modular, testable, decoupled, commented |

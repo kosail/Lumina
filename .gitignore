@@ -1,0 +1,42 @@
+# Build trees (CMake presets write to build/<preset>; CLion writes cmake-build-*).
+/build/
+/cmake-build-*/
+
+# JetBrains / CLion project files are kept local (see CHG-0006).
+/.idea/
+
+# CMake user-local presets must never be committed (per the CMake documentation).
+CMakeUserPresets.json
+
+# Local third-party sources fetched/built by scripts (ncnn, libpiper, onnxruntime).
+# Ignore the contents but keep the directory placeholder trackable.
+/third_party/*
+!/third_party/.gitkeep
+
+# Model weights and voices are downloaded/exported, never committed (INV-022).
+/models/**/*.onnx
+/models/**/*.param
+/models/**/*.bin
+/models/**/*.pt
+/models/**/*.tflite
+
+# Compiled objects and libraries.
+*.o
+*.a
+*.so
+*.so.*
+
+# Editor / OS noise.
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Python (tooling only: model export scripts).
+__pycache__/
+*.pyc
+.venv/
+
+# Do not commit private keys or secrets.
+*.pem
+*.key
