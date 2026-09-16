@@ -96,12 +96,15 @@ dossier's central differentiator.
 
 ### INV-010 — Target hardware is the Raspberry Pi Zero 2 W  `HARD`
 
-**Statement.** The runtime must run well on: Broadcom BCM2710A1, **quad-core 64-bit Arm
-Cortex-A53 @ 1 GHz**, **512 MB LPDDR2**, CSI-2 camera, single USB OTG, microSD, no analog audio.
+**Statement.** The runtime must run well on the **Raspberry Pi Zero 2 W Rev 1.0**: SoC reported by
+the OS as **Broadcom BCM2837** (vendor SiP **RP3A0 / BCM2710A1** die; both are **quad-core 64-bit
+Arm Cortex-A53 @ 1 GHz**), **512 MB LPDDR2**, GPU **VideoCore IV** (`bcm2835-vc4`; no general-purpose
+GPU compute), CSI-2 camera, single USB OTG, microSD, no analog audio.
 
-**Rationale.** This is the physical device already owned and demonstrated.
+**Rationale.** This is the physical device already owned and demonstrated. Full verified details in
+`INV-025`.
 
-**Source.** `RPI_2W_SPECSHEET.txt`.
+**Source.** User-verified hardware report (2026-09-16) + `RPI_2W_SPECSHEET.txt`.
 
 **Changeability.** Not without different hardware.
 
@@ -123,13 +126,21 @@ distortion is expected; detection/face work on a **central ROI** unless undistor
 
 ### INV-012 — Cortex-A53 has NO INT8 dot-product acceleration  `HARD`
 
-**Statement.** The A53 is ARMv8.0-A: NEON exists, but SDOT/UDOT (ARMv8.2 int8 dot-product) do
-**not**. Therefore INT8 quantization must **not** be assumed to give large speedups.
-**Default precision is FP16**, and INT8 is adopted only if on-device benchmarks prove a win.
+**Statement.** The A53 implements **ARMv8.0-A**: NEON is present, but the integer dot-product
+instructions **SDOT/UDOT** are **not** (they were added in later profiles, ARMv8.2-A/8.4-A), and
+full **FP16 arithmetic** is likewise absent (added as an optional extension in ARMv8.2-A; on A53
+FP16 is a *storage* format only). Consequences:
+- INT8 quantization must **not** be assumed to give large arithmetic speedups; the benefit is
+  mainly a smaller model and reduced memory bandwidth.
+- "FP16" on this CPU means FP16 **storage** with fp32 arithmetic.
+- **Default precision is FP16**, and INT8 is adopted only if on-device benchmarks prove a win.
 
 **Rationale.** Prevents repeating the dossier's speculative "4× INT8" claim as if it were fact.
+The dot-product and FP16-processing extensions post-date ARMv8.0-A and are not present on the A53.
 
-**Source.** ARM architecture facts + `RAW_PLAN.md` §2; research (Ultralytics Pi benchmarks).
+**Source.** Wikipedia "ARM Cortex-A53" (ARMv8-A; BCM2837 and Raspberry Pi Zero 2 W both listed
+under Cortex-A53) and "AArch64" (ARMv8.4-A adds SDOT/UDOT; ARMv8.2-A adds optional half-precision
+*processing*); `RAW_PLAN.md` §2; user-verified CPU report (2026-09-16).
 
 **Changeability.** Not changeable (hardware); the precision choice is measured, not assumed.
 
@@ -181,17 +192,18 @@ on exotic cooling; still avoid needless sustained load.
 
 ## 3. PLATFORM / BUILD invariants
 
-### INV-020 — Language is C++20  `HARD`
+### INV-020 — Language is C++23  `HARD`
 
-**Statement.** Production code is **C++20** (not C++23). C++23 features (`std::expected`,
-`std::print`, `std::mdspan`, `std::stacktrace`) must not be used. CMake ≥ 3.20.
+**Statement.** Production code is **C++23**, built with the target toolchain (GCC **14.2.1** on
+Debian 13 "trixie"; see `INV-025`). CMake ≥ 3.20.
 
-**Rationale.** GCC on Pi OS Bookworm is GCC 12, which is C++20-complete but only partially
-C++23; the user explicitly selected C++20. See `RAW_PLAN.md` §7.
+**Rationale.** The target and the host cross-compiler are GCC 14.2.1, which supports C++23; the user
+selected C++23. Some individual C++23 library facilities may still be incomplete in GCC 14.2 —
+verify availability before depending on a specific one (INV-001). See `RAW_PLAN.md` §7.
 
-**Source.** User instruction (2026-09-15) + `RAW_PLAN.md`.
+**Source.** User instruction (2026-09-16) + `INV-025`.
 
-**Changeability.** Requires user approval and a toolchain upgrade.
+**Changeability.** Requires user approval.
 
 ---
 
@@ -226,12 +238,15 @@ Debug rendering, if any, is behind a compile-time flag and must not run in the s
 
 ### INV-023 — Cross-compile; no heavy native builds  `PROCESS`
 
-**Statement.** Build on the laptop with an aarch64 sysroot. Do **not** run heavy native builds on
-the Zero 2W (512 MB causes OOM and takes hours); native build is a last-resort fallback only.
+**Statement.** Build on the laptop with an **aarch64 sysroot** (Raspberry Pi OS / Debian 13
+"trixie", GCC 14). Do **not** run heavy native builds on the Zero 2W (512 MB causes OOM and takes
+hours); native build is a last-resort fallback only. The host cross-compiler must match the sysroot
+ABI (**GCC 14.2.1** confirmed: `aarch64-linux-gnu-g++`).
 
-**Rationale.** Build time is the project's #1 schedule risk.
+**Rationale.** Build time is the project's #1 schedule risk. A compiler/sysroot ABI mismatch (e.g.
+linking the wrong `libstdc++.so.6`) is a common cross-compile failure.
 
-**Source.** `RAW_PLAN.md` §7 / §11.
+**Source.** `RAW_PLAN.md` §7 / §11; user-verified toolchain report (2026-09-16).
 
 **Changeability.** By user approval.
 
@@ -239,20 +254,53 @@ the Zero 2W (512 MB causes OOM and takes hours); native build is a last-resort f
 
 ### INV-024 — Target OS is Raspberry Pi OS Lite 64-bit  `HARD`
 
-**Statement.** The runtime target is **Raspberry Pi OS Lite 64-bit** (glibc, aarch64).
-**DietPi 64-bit** is the only permitted alternative, and only as a **post-gate optimization**
-(after the end-of-Day-2 GO/NO-GO gate) if memory pressure requires it. **Alpine/musl is explicitly
-rejected** for the beta.
+**Statement.** The runtime target is **Raspberry Pi OS Lite 64-bit based on Debian 13 "trixie"**
+(glibc, aarch64; kernel **6.18.x+rpt-rpi-v8**). **DietPi 64-bit** is the only permitted
+alternative, and only as a **post-gate optimization** (after the end-of-Day-2 GO/NO-GO gate) if
+memory pressure requires it. **Alpine/musl is explicitly rejected** for the beta.
 
 **Rationale.** The OV5647 ISP/libcamera stack and the glibc-only `onnxruntime` that `libpiper`
 links are the reference-supported path on Pi OS; Alpine/musl risks camera and TTS bring-up and
 would require rebuilding dependencies — unacceptable on the 6-day budget (INV-071). DietPi is
 Debian/glibc over the Raspberry Pi kernel, so it stays compatible while trimming background
-services (helps INV-052). See CHG-0004.
+services (helps INV-052). The verified target environment is recorded in `INV-025`. See CHG-0004
+and CHG-0007.
 
 **Source.** User decision (2026-09-15).
 
 **Changeability.** Requires user approval; changes the cross-compile sysroot and CHANGELOG.
+
+---
+
+### INV-025 — Verified target environment (ground truth)  `HARD`
+
+**Statement.** The following is the verified environment for the beta target and must be treated as
+ground truth when making build/performance decisions:
+
+| Item | Verified value |
+|------|----------------|
+| Board | Raspberry Pi Zero 2 W **Rev 1.0** |
+| OS | Raspberry Pi OS (reports as **Debian GNU/Linux 13 "trixie"**), **aarch64** |
+| Kernel | **6.18.50+rpt-rpi-v8** (64-bit) |
+| CPU | reported **Broadcom BCM2837**, **4 cores @ 1.00 GHz** (Arm **Cortex-A53**, ARMv8.0-A) |
+| GPU | **Broadcom bcm2835-vc4** (VideoCore IV; no general-purpose GPU compute) |
+| RAM | 512 MB (vendor spec sheet) |
+| Host cross-compiler | `aarch64-linux-gnu-g++` **GCC 14.2.1 20250405** (Arch package; built-in sysroot `/usr/aarch64-linux-gnu`, `lib64` layout) |
+| Host gotcha | The Arch cross toolchain **ignores `--sysroot` for library search**; the toolchain file must pass explicit `-L`/`-Wl,--sysroot`/`-rpath-link` (see `CHG-0008`, `docs/CROSS_COMPILE.md`) |
+| Sysroot provenance | rsync `pi:/usr` -> `cmake/rpi-sysroot/usr`, plus merged-`/usr` symlinks; built/refreshed by `scripts/sync_sysroot.sh` (gitignored, ~1.4 GB) |
+| Target toolchain (sysroot) | GCC **14** (`usr/include/c++/14`) |
+| OpenCV | **4.10.0**; `objdetect/face.hpp` provides `FaceDetectorYN` + `FaceRecognizerSF` |
+| libcamera | **0.7** (`libcamera.so.0.7`) |
+
+**Rationale.** Centralizes the facts several other invariants depend on (INV-010, INV-012, INV-020,
+INV-023, INV-024) so a future agent does not re-derive or assume them (INV-001). Note the CPU-label
+discrepancy: the OS reports **BCM2837** while the vendor spec sheet names the SiP **RP3A0 /
+BCM2710A1**; both are quad Arm Cortex-A53, so the ISA conclusions are identical.
+
+**Source.** User-provided observations from the actual device (2026-09-16) plus inspection of the
+cross sysroot.
+
+**Changeability.** Update only with new device/sysroot observations (human-approved).
 
 ---
 
@@ -498,11 +546,12 @@ where they differ from Java.
 | INV-013  | SCOPE    | No proximity sensor present (modular hook) |
 | INV-014  | HARD     | Exactly one Bluetooth audio device |
 | INV-015  | HARD     | Thermal headroom is not a concern |
-| INV-020  | HARD     | Language is C++20 |
+| INV-020  | HARD     | Language is C++23 |
 | INV-021  | HARD     | Headless operation |
 | INV-022  | HARD     | Fixed runtime stack |
 | INV-023  | PROCESS  | Cross-compile; no heavy native builds |
-| INV-024  | HARD     | Target OS is Raspberry Pi OS Lite 64-bit |
+| INV-024  | HARD     | Target OS is Raspberry Pi OS Lite 64-bit (trixie) |
+| INV-025  | HARD     | Verified target environment (ground truth) |
 | INV-030  | HARD     | Interface-first and dependency injection |
 | INV-031  | HARD     | Bounded queues; never block capture |
 | INV-032  | HARD     | Safety alerts preempt descriptions |

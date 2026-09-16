@@ -2,7 +2,7 @@
 # Run `clang-format -i` on changed files before committing.
 BasedOnStyle: Google
 Language: Cpp
-Standard: c++20
+Standard: c++23
 ColumnLimit: 100
 IndentWidth: 4
 TabWidth: 4

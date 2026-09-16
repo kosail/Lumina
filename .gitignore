@@ -13,6 +13,10 @@ CMakeUserPresets.json
 /third_party/*
 !/third_party/.gitkeep
 
+# Cross-compile sysroot (large tree; regenerate from the Pi, never commit).
+/cmake/rpi-sysroot/
+/cmake/*-sysroot/
+
 # Model weights and voices are downloaded/exported, never committed (INV-022).
 /models/**/*.onnx
 /models/**/*.param

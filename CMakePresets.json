@@ -18,7 +18,8 @@
       "binaryDir": "${sourceDir}/build/aarch64",
       "toolchainFile": "${sourceDir}/cmake/toolchain-aarch64.cmake",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "LUMINA_SYSROOT": "${sourceDir}/cmake/rpi-sysroot"
       }
     }
   ],

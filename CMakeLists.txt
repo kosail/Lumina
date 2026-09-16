@@ -2,7 +2,7 @@
 # Lúmina beta runtime — top-level build configuration.
 #
 # Target: Raspberry Pi Zero 2 W (aarch64, glibc) — see INVARIANTS.md (INV-010, INV-024).
-# Language: C++20, no compiler extensions — see INVARIANTS.md (INV-020).
+# Language: C++23 (GCC 14.2.1), no compiler extensions — see INVARIANTS.md (INV-020, INV-025).
 #
 # Build presets live in CMakePresets.json:
 #   cmake --preset host    && cmake --build --preset host     # laptop, mocks, fast tests
@@ -18,8 +18,8 @@ project(Lumina
     DESCRIPTION "Edge-AI assistive runtime for the Raspberry Pi Zero 2 W"
     LANGUAGES CXX)
 
-# C++20 is mandatory and compiler-specific extensions are disabled (INV-020).
-set(CMAKE_CXX_STANDARD 20)
+# C++23 is mandatory and compiler-specific extensions are disabled (INV-020).
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 

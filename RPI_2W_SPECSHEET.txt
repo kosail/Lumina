@@ -1,6 +1,6 @@
 Raspberry Pi Zero 2 W is the latest product in our most affordable range of single-board computers. The successor to the breakthrough Raspberry Pi Zero W, Raspberry Pi Zero 2 W is a form factor–compatible drop-in replacement for the original board. The board incorporates a quad-core 64-bit Arm Cortex-A53 CPU, clocked at 1GHz.
 
-At its heart is a Raspberry Pi RP3A0 system-in-package (SiP), integrating a Broadcom BCM2710A1 die with 512MB of LPDDR2 SDRAM. The upgraded processor provides Raspberry Pi Zero 2 W with 40% more single-threaded performance, and five times more multi-threaded performance, than the original single-core Raspberry Pi Zero.
+At its heart is a Raspberry Pi RP3A0 system-in-package (SiP), integrating a Broadcom BCM2710A1 die with 512MB of LPDDR2 SDRAM. The operating system reports the CPU as a Broadcom BCM2837, which is the same quad-core 64-bit Arm Cortex-A53 design. The upgraded processor provides Raspberry Pi Zero 2 W with 40% more single-threaded performance, and five times more multi-threaded performance, than the original single-core Raspberry Pi Zero.
 
 Raspberry Pi Zero 2 W offers 2.4GHz 802.11 b/g/n wireless LAN and Bluetooth 4.2, along with support for Bluetooth Low Energy (BLE), and modular compliance certification.
 
@@ -8,8 +8,9 @@ The board has a microSD card slot, a CSI-2 camera connector, a USB On-The-Go (OT
 
 Specification
 Form factor: 65mm×30mm
-Processor: Broadcom BCM2710A1, quad-core 64-bit SoC (Arm Cortex-A53 @ 1GHz)
+Processor: Broadcom BCM2710A1 (RP3A0 SiP); OS reports the CPU as BCM2837 — quad-core 64-bit Arm Cortex-A53 @ 1GHz
 Memory: 512MB LPDDR2
+GPU: Broadcom VideoCore IV (Linux driver: bcm2835-vc4)
 Connectivity:
 - 2.4GHz IEEE 802.11b/g/n wireless LAN, Bluetooth 4.2, BLE, onboard antenna
 - 1 × USB 2.0 interface with OTG
@@ -28,3 +29,10 @@ Input power: 5V DC 2.5A
 Operating temperature: -20°C to +70°C
 Production lifetime: Raspberry Pi Zero 2 W will remain in production until at least January 2030
 Compliance: For a full list of local and regional product approvals, please visit pip.raspberrypi.com
+
+Observed unit (verified 2026-09-16)
+Host: Raspberry Pi Zero 2 W Rev 1.0
+OS: Debian GNU/Linux 13 (trixie) aarch64 (Raspberry Pi OS Lite 64-bit)
+Kernel: Linux 6.18.50+rpt-rpi-v8
+CPU: BCM2837 (4 cores) @ 1.00 GHz — Arm Cortex-A53 (ARMv8.0-A)
+GPU: Broadcom bcm2835-vc4 [integrated VideoCore IV]

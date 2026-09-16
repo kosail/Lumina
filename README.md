@@ -4,7 +4,7 @@ Lúmina is an edge-AI assistive device for blind and low-vision users. A camera 
 environment; on-device AI interprets it; the result is spoken through bone-conduction audio.
 Everything runs locally — no cloud, no internet connection required.
 
-This repository is the **real runtime** for the **Raspberry Pi Zero 2 W**, written in **C++20**.
+This repository is the **real runtime** for the **Raspberry Pi Zero 2 W**, written in **C++23**.
 It is a from-scratch build; the original Python proof-of-concept ("nightly") is a separate
 prototype and is **not** part of this codebase.
 
@@ -27,17 +27,17 @@ support, cloud processing, desktop/GUI, and multi-device Bluetooth.
 
 | Component | Specification |
 |-----------|---------------|
-| Board | Raspberry Pi Zero 2 W — BCM2710A1, quad-core Arm Cortex-A53 @ 1 GHz, 512 MB LPDDR2 |
+| Board | Raspberry Pi Zero 2 W Rev 1.0 — reported BCM2837, quad-core Arm Cortex-A53 @ 1 GHz, 512 MB LPDDR2 |
 | Camera | OV5647 5 MP, ~135° diagonal, auto IR-CUT (75/175), fixed manual focus (via libcamera) |
 | Audio | Bluetooth A2DP bone-conduction earbuds (single paired device) |
 | Enclosure | Solid aluminum case (thermal headroom is comfortable) |
-| OS | Raspberry Pi OS Lite 64-bit (glibc, aarch64), headless |
+| OS | Raspberry Pi OS Lite 64-bit based on Debian 13 "trixie" (glibc, aarch64; kernel 6.18.x), headless |
 
 ## Stack
 
 | Layer | Choice | Notes |
 |-------|--------|-------|
-| Language / build | C++20, CMake >= 3.20 | No C++23-only features |
+| Language / build | C++23 (GCC 14.2.1), CMake >= 3.20 | Some C++23 library facilities may lag; verify before use |
 | Inference | [NCNN](https://github.com/Tencent/ncnn) + YOLO11n | Pure C++, best ARM CPU performance |
 | Capture | libcamera | OV5647 sensor |
 | Face | OpenCV `objdetect` (YuNet + SFace) | MobileFaceNet/NCNN is the low-RAM alternative |
@@ -75,7 +75,7 @@ src/
   i18n/         Spanish message catalog
   telemetry/    optional UDP telemetry
 models/         yolo11n_ncnn/, face/, voices/
-scripts/        cross_build.sh, export_models.sh, enroll_face.sh, bt_setup.sh
+scripts/        sync_sysroot.sh, export_models.sh, enroll_face.sh, bt_setup.sh
 tests/          unit tests (doctest) and on-device benchmarks
 cmake/          aarch64 toolchain and find-modules
 ```
@@ -104,12 +104,23 @@ ctest --preset host
 
 ### Cross build for the Raspberry Pi
 
+First time only, build the target sysroot from the Pi (needs `rsync` + `ssh`; ~1.4 GB, gitignored):
+
 ```bash
-scripts/cross_build.sh          # produces build/aarch64/lumina
+scripts/sync_sysroot.sh --host pi@<pi-host>   # -> cmake/rpi-sysroot/
 ```
 
-Build on the laptop, not on the device: native builds on a 512 MB board are slow and can run out
-of memory. A native build is a last-resort fallback only.
+Then, on the laptop:
+
+```bash
+cmake --preset aarch64          # configure with cmake/toolchain-aarch64.cmake
+cmake --build --preset aarch64  # produces build/aarch64/lumina
+```
+
+Requires a GCC 14 aarch64 cross toolchain. Build on the laptop, not on the device: native builds on
+a 512 MB board are slow and can run out of memory. Full walkthrough (extraction, placement,
+symlinks, verification, deployment, troubleshooting, and the Arch `--sysroot` gotcha):
+[`docs/CROSS_COMPILE.md`](docs/CROSS_COMPILE.md).
 
 ### Models
 

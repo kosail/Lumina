@@ -229,4 +229,123 @@
     Day 0-1 still pending (interfaces, bounded_queue, Result<T>, ICamera mock, export_models.sh).
     Verify the host build with `cmake --preset host && cmake --build --preset host`; the aarch64
     preset requires an aarch64 cross toolchain and (ideally) a Raspberry Pi OS sysroot.
+
+# ---------------------------------------------------------------------------
+# CHG-0007 — Verified target environment; migrate to Debian 13 (trixie) + C++23
+# ---------------------------------------------------------------------------
+- id: CHG-0007
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-010, INV-012, INV-020, INV-023, INV-024, INV-025]
+  supersedes: null
+  summary: >-
+    Corrected all environment facts to the user-verified target and moved the language to C++23.
+    Added INV-025 (verified target environment) and amended INV-010, INV-012, INV-020, INV-023,
+    INV-024. Updated AGENTS, SPECS, RAW_PLAN, README, CMakeLists, .clang-format, the aarch64
+    toolchain/preset, .gitignore, the root analysis doc, and RPI_2W_SPECSHEET.txt.
+  rationale: >-
+    The device reports Debian GNU/Linux 13 "trixie" aarch64 (Raspberry Pi OS Lite 64-bit), kernel
+    6.18.50+rpt-rpi-v8, CPU BCM2837 (4x Cortex-A53 @1GHz), GPU bcm2835-vc4, not Bookworm/BCM2710A1
+    as previously assumed. The host cross-compiler is GCC 14.2.1, matching the sysroot GCC 14, so
+    the bookworm/GCC-12 rationale for staying on C++20 was wrong; the user chose C++23. INV-012 was
+    re-verified against sources: the A53 is ARMv8.0-A and lacks SDOT/UDOT (added in later profiles)
+    and FP16 arithmetic (ARMv8.2), so INT8 gains are bandwidth/size, not arithmetic. This entry
+    supersedes the Bookworm/GCC-12 statements in CHG-0004 and CHG-0006 without editing them. The
+    C++20 -> C++23 switch was a user correction and is recorded here rather than as its own entry.
+  files:
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/.clang-format
+    - Lumina-BETA-RPI-2W/.gitignore
+    - Lumina-BETA-RPI-2W/cmake/toolchain-aarch64.cmake
+    - Lumina-BETA-RPI-2W/CMakePresets.json
+    - Lumina-BETA-RPI-2W/RPI_2W_SPECSHEET.txt
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+    - FIRST_IMPRESSIONS_ON_NIGHTLY_VERSION.md
+  approvals: [user]
+  follow_up: >-
+    After the clean sysroot is in place, verify it exposes CMake (OpenCVConfig.cmake, libcamera)
+    and pkg-config metadata so find_package works; otherwise set include/lib paths manually. Then
+    run `cmake --preset host` and, once the sysroot is ready, `cmake --preset aarch64`.
+
+# ---------------------------------------------------------------------------
+# CHG-0008 — Cross-compile works: fix Arch --sysroot gotcha + document the process
+# ---------------------------------------------------------------------------
+- id: CHG-0008
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-023, INV-025]
+  supersedes: null
+  summary: >-
+    Made the CMake cross build actually work and documented cross-compilation. Added explicit
+    sysroot link flags to cmake/toolchain-aarch64.cmake, added docs/CROSS_COMPILE.md, linked it
+    from the README and AGENTS, noted the host toolchain gotcha in INV-025, and appended this entry.
+  rationale: >-
+    A manual cross-compile initially failed with "cannot find /usr/lib64/libm.so.6: file in wrong
+    format". Diagnostics showed the host cross toolchain (Arch's aarch64-linux-gnu-gcc, built-in
+    sysroot /usr/aarch64-linux-gnu with a lib64 layout) does NOT apply --sysroot to its library
+    search, so -lm fell back to the host's x86-64 /usr/lib64. Passing explicit -L<sysroot>
+    /usr/lib/aarch64-linux-gnu (+ /lib/aarch64-linux-gnu), -Wl,--sysroot, and -Wl,-rpath-link made
+    the link succeed; the resulting aarch64 ELF ran correctly on the Pi. The same flags are now
+    baked into the toolchain file (linker AND compiler flags, so CMake's compiler/ABI probe also
+    succeeds), and the sysroot's merged-/usr symlinks (lib -> usr/lib, loader alias) are documented.
+  files:
+    - Lumina-BETA-RPI-2W/cmake/toolchain-aarch64.cmake
+    - Lumina-BETA-RPI-2W/docs/CROSS_COMPILE.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Run `cmake --preset aarch64 && cmake --build --preset aarch64` on the host to confirm the
+    preset path works end to end; then proceed to Day 0-1. A separate OpenCV/libcamera smoke target
+    was intentionally NOT added in this change (deferred).
+```
+
+# ---------------------------------------------------------------------------
+# CHG-0009 — Redesign cross-compile guide; add sync_sysroot.sh
+# ---------------------------------------------------------------------------
+- id: CHG-0009
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: docs
+  status: applied
+  invariants: [INV-023, INV-025]
+  supersedes: null
+  summary: >-
+    Rewrote docs/CROSS_COMPILE.md as an end-to-end Setup -> Build -> Maintain guide (extraction from
+    the Pi, placement, merged-/usr symlinks, a verification gate, deployment, refresh, troubleshooting)
+    and added scripts/sync_sysroot.sh, an idempotent helper that mkdirs, rsyncs the Pi's /usr into
+    cmake/rpi-sysroot/usr, re-creates the symlinks, and verifies sysroot anchors. Updated README and
+    AGENTS command/layout references and added a sysroot-provenance row to INV-025.
+  rationale: >-
+    The first version of the guide assumed a sysroot already existed: it never explained how to pull
+    /usr off the Pi (tool, flags, excludes, ownership), never said to create cmake/rpi-sysroot and
+    rsync into .../usr, listed the symlinks before any sysroot existed and without noting they must be
+    re-created on refresh, and had no verification step (a broken sysroot failed deep in CMake).
+    The redesign makes the one-time setup explicit and adds a script so the manual steps are
+    repeatable. Decisions (user-approved): include the helper script; document installing the -dev
+    packages on the Pi; use rsync without --delete and re-add symlinks on every refresh; keep example
+    commands generic (pi@<pi-host>).
+  files:
+    - Lumina-BETA-RPI-2W/docs/CROSS_COMPILE.md
+    - Lumina-BETA-RPI-2W/scripts/sync_sysroot.sh
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Run scripts/sync_sysroot.sh --check on the host to confirm the anchors pass, and confirm the
+    script exists on the machine with bash available (it uses bash arrays). The script itself was
+    not executed in the agent container (no bash/rsync/ssh/network there).
 ```

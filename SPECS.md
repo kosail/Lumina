@@ -52,6 +52,8 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
 - **Priority:** MUST · **Status:** Approved · **Trace:** INV-040, INV-041
 - **Description:** Detect faces (YuNet) and recognize a small set of enrolled people using
   on-device embeddings (SFace by default, or MobileFaceNet), speaking the person's name in Spanish.
+- **Verified:** OpenCV **4.10.0** in the target sysroot provides `FaceDetectorYN` and
+  `FaceRecognizerSF` in `opencv2/objdetect/face.hpp` (INV-025).
 - **Acceptance criteria:**
   1. Supports enrolling between 3 and 4 people.
   2. Recognizes an enrolled person in a live demo with a conservative false-accept threshold; a
@@ -162,8 +164,8 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
 
 ### NFR-08 — Compatibility
 - **Priority:** MUST · **Trace:** INV-020, INV-021, INV-022, INV-023
-- Builds as C++20 with CMake ≥ 3.20; runs headless on Pi OS Lite 64-bit; cross-compiled from the
-  laptop; uses only the fixed runtime stack.
+- Builds as C++23 (GCC 14.2.1) with CMake ≥ 3.20; runs headless on Raspberry Pi OS Lite 64-bit
+  (Debian 13 "trixie"); cross-compiled from the laptop; uses only the fixed runtime stack.
 
 ---
 
@@ -172,7 +174,7 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
 | ID | Constraint | Trace |
 |----|------------|-------|
 | CON-01 | 6 working days; competition in 7; hard GO/NO-GO gate at end of Day 2. | INV-071 |
-| CON-02 | Must be C++20 on the Raspberry Pi Zero 2 W (512 MB). | INV-010, INV-020 |
+| CON-02 | Must be C++23 on the Raspberry Pi Zero 2 W (512 MB, Cortex-A53). | INV-010, INV-020 |
 | CON-03 | No cloud, no network dependency in the core path. | INV-003 |
 | CON-04 | Exactly one Bluetooth output device (bone-conduction earbuds). | INV-014 |
 | CON-05 | Camera is the OV5647 135° IR-CUT module via libcamera. | INV-011 |

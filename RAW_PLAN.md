@@ -2,10 +2,11 @@
 
 doc_id: lumina.beta.raw_plan
 status: approved_pending_execution
-target_hw: Raspberry Pi Zero 2 W (BCM2710A1, quad Cortex-A53 @1GHz, 512MB LPDDR2)
+target_hw: Raspberry Pi Zero 2 W Rev 1.0 (reported BCM2837, 4x Cortex-A53 @1GHz, 512MB LPDDR2)
+target_os: Raspberry Pi OS Lite 64-bit (Debian 13 "trixie", aarch64), kernel 6.18.x+rpt-rpi-v8
 camera: OV5647 5MP, 135° diagonal, IR-CUT 75/175 auto, fixed manual focus
 audio_out: Bluetooth A2DP bone-conduction earbuds (single device, already paired)
-language_target: C++ (baseline C++20; use C++23 where toolchain allows)
+language_target: C++23 (GCC 14.2.1)
 deadline: 6 working days (competition in 7)
 repo: Lumina-BETA-RPI-2W
 objective: functional beta that MUST run well on RPi Zero 2W
@@ -72,8 +73,12 @@ CMake options:
 - Fixed focus: set lens manually for ~0.5-3 m working range.
 - IR-CUT auto: color by day, B&W by night. Ensure IR LED board is off/auto in daylight.
 - NO proximity/distance sensor in bundle. 4 screw holes are for IR LED board (illuminator).
-- Cortex-A53 = ARMv8.0-A: NEON yes, NO int8 dot-product (SDOT/UDOT). int8 gains limited.
-  => benchmark fp16 vs int8; do not assume dossier's 4x int8 claim.
+- Verified environment (INV-025): Raspberry Pi Zero 2 W Rev 1.0; Raspberry Pi OS Lite 64-bit
+  Debian 13 "trixie" aarch64; kernel 6.18.x+rpt-rpi-v8; CPU reported BCM2837 = 4x Cortex-A53
+  @1GHz; GPU bcm2835-vc4; GCC 14.2.1.
+- Cortex-A53 = ARMv8.0-A: NEON yes, NO int8 dot-product (SDOT/UDOT; added ARMv8.2/8.4) and NO
+  FP16 arithmetic (added ARMv8.2). int8 gains are mainly bandwidth/size, not arithmetic.
+  => benchmark fp16 vs int8; do not assume the dossier's 4x int8 claim.
 - 512MB RAM is the binding constraint. Prefer MobileFaceNet if SFace pressures memory.
 - BT + WiFi share 2.4GHz antenna -> glitches under interference.
 
@@ -183,11 +188,13 @@ car, bicycle, motorcycle, bus, truck, stairs(optional custom). ES i18n map reuse
 
 ## 7. BUILD / TOOLCHAIN
 
-- Cross-compile on laptop with Debian Bookworm aarch64 sysroot.
-- OpenCV from sysroot apt (libopencv-dev provides objdetect: FaceDetectorYN + SFace).
+- Cross-compile on the laptop with a Debian 13 "trixie" aarch64 sysroot (host and target GCC
+  **14.2.1**, matching ABI).
+- OpenCV **4.10.0** from the sysroot (objdetect provides FaceDetectorYN + SFace — verified,
+  INV-025). A clean sysroot must expose its CMake/pkg-config metadata for `find_package` to work.
 - NCNN: official aarch64 prebuilt or cross-build; statically link.
 - libpiper: build once, cache binary + espeak-ng-data; link onnxruntime.
-- Code baseline C++20; enable C++23 features conditionally (GCC12 partial C++23).
+- Language baseline is **C++23** (GCC 14.2.1); verify individual C++23 library facilities before use.
 - Provide native fallback build for on-device last resort (low -j, zram).
 
 ---
@@ -229,8 +236,10 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| OpenCV/libpiper cross-build time | schedule | cache sysroot; apt OpenCV; build libpiper once |
-| Full C++23 unsupported (GCC12) | compile | C++20 baseline; feature-gate C++23 |
+| OpenCV/libpiper cross-build time | schedule | sysroot provides OpenCV 4.10; build libpiper once |
+| Host/sysroot ABI mismatch | compile | host cross-compiler GCC 14.2.1 matches sysroot (INV-023/025) |
+| Sysroot missing CMake/pkg-config metadata | build | verify after clean copy; else set include/lib paths |
+| C++23 library gaps in GCC 14.2 | compile | verify a facility before using it (INV-020) |
 | A53 int8 underperforms | perf | benchmark fp16; default fp16 |
 | 512MB RAM pressure | runtime | MobileFaceNet option; zram; one model resident |
 | 135° distortion + fixed focus | accuracy | central ROI; set focus 0.5-3m; optional undistort |

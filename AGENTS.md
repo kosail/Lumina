@@ -57,7 +57,7 @@ below `0.80`, stop and ask the user. See `INVARIANTS.md` → INV-001.
 
 ## 3. Stack and platforms
 
-- **Language:** C++20 (NOT C++23). See INV-020.
+- **Language:** C++23 (GCC 14.2.1). See INV-020.
 - **Build:** CMake ≥ 3.20, CMake Presets, out-of-source builds.
 - **Inference:** NCNN (static link). Model: YOLO11n exported to NCNN (`model.ncnn.param`/`.bin`).
 - **Capture:** libcamera (OV5647 sensor). See INV-011.
@@ -66,9 +66,15 @@ below `0.80`, stop and ask the user. See `INVARIANTS.md` → INV-001.
 - **TTS:** libpiper (C API) + espeak-ng, Spanish (es_MX) voice.
 - **Audio out:** ALSA PCM routed to `bluealsa` → Bluetooth A2DP earbuds.
 - **Bluetooth:** BlueZ (single trusted device).
-- **Target OS:** Raspberry Pi OS **Lite 64-bit** (glibc, aarch64), headless (INV-021, INV-024).
-  DietPi 64-bit is the only permitted alternative and only as a **post-gate optimization**;
-  Alpine/musl is rejected for the beta.
+- **Target OS:** Raspberry Pi OS **Lite 64-bit, Debian 13 "trixie"** (glibc, aarch64; kernel
+  6.18.x+rpt-rpi-v8), headless (INV-021, INV-024). DietPi 64-bit is the only permitted alternative
+  and only as a **post-gate optimization**; Alpine/musl is rejected for the beta.
+- **Toolchain:** GCC **14.2.1** on the device and on the host cross-compiler
+  (`aarch64-linux-gnu-g++`); compile against an aarch64 **trixie sysroot** (INV-023, INV-025).
+  Target facts (board, kernel, GPU, library versions) are recorded in `INV-025`.
+  **Known host gotcha:** the Arch cross toolchain ignores `--sysroot` for library search, so
+  `cmake/toolchain-aarch64.cmake` adds explicit `-L`/`-Wl,--sysroot`/`-rpath-link` flags.
+  Do not remove them. Full walkthrough: `docs/CROSS_COMPILE.md`.
 - **Python:** **tooling only** (model export, benchmark scripts). Not part of the runtime.
 - **Host for builds:** the developer laptop (cross-compile). No heavy native builds on the Pi
   (INV-023).
@@ -86,7 +92,7 @@ Lumina-BETA-RPI-2W/
   CHANGELOG.md               # append-only history (AI-oriented)
   CMakeLists.txt
   CMakePresets.json
-  cmake/                     # toolchain-aarch64.cmake, FindBlueALSA.cmake, etc.
+  cmake/                     # toolchain-aarch64.cmake, FindBlueALSA.cmake, rpi-sysroot/ (gitignored)
   third_party/               # ncnn (static), libpiper + onnxruntime
   models/                    # yolo11n_ncnn/, face/, voices/
   src/
@@ -100,7 +106,7 @@ Lumina-BETA-RPI-2W/
     audio/                   # piper_tts, bluealsa_sink
     i18n/                    # es message catalog
     telemetry/               # udp (optional, off by default)
-  scripts/                   # cross_build.sh, export_models.sh, enroll_face.sh, bt_setup.sh
+  scripts/                   # sync_sysroot.sh, export_models.sh, enroll_face.sh, bt_setup.sh
   tests/                     # doctest unit tests + bench targets
   docs/                      # design notes
 ```
@@ -117,7 +123,7 @@ Keep new code inside the matching module. Do not create new top-level directorie
 2. **Bounded queues; drop stale frames.** Capture never blocks on inference.
 3. **Alert arbiter:** safety alerts preempt descriptions; speech is interruptible.
 4. **Threading:** one thread per pipeline stage, connected by bounded queues. Prefer
-   `std::jthread` (auto-joining, C++20). No detached threads.
+   `std::jthread` (auto-joining). No detached threads.
 5. **No global mutable state.** Pass dependencies explicitly.
 6. **Proximity and telemetry are compiled out by default** (CMake options).
 7. **Single responsibility per module.** One class per file where practical. Keep headers thin.
@@ -194,8 +200,8 @@ Because the maintainer is returning from Java, **explain C++-specific constructs
 - **`[[nodiscard]]`** on functions whose return value must not be ignored (factories, `init`,
   `read`).
 - **`enum class`** instead of plain enums (scoped, type-safe — closest to Java enums).
-- **Error handling.** C++20 has no `std::expected`. Return a `Result<T>` helper type
-  (`src/core/result.hpp`) or `std::optional<T>`; reserve exceptions for truly exceptional,
+- **Error handling.** Prefer `std::expected<T, E>` (C++23) or our `Result<T>` helper type
+  (`src/core/result.hpp`) / `std::optional<T>`; reserve exceptions for truly exceptional,
   non-recoverable conditions and **never let exceptions cross a thread boundary**.
 - **Threads.** `std::jthread` + our bounded queue + `std::mutex`/condition variables. Avoid
   busy-waiting. Use `std::atomic` only for simple flags/counters.
@@ -203,11 +209,12 @@ Because the maintainer is returning from Java, **explain C++-specific constructs
 - **Headers.** No `using namespace` in headers. Include what you use; keep includes minimal.
 - **Avoid `std::iostream` in hot paths.** Use the project logger (`src/core/logging.*`).
 
-### Allowed C++20 features
+### Allowed C++23 features
 
 Concepts, ranges, `std::span`, `std::jthread`, `std::atomic<std::shared_ptr>`, designated
-initializers, `constexpr`/`consteval`, `std::bit_cast`, `std::format` (if the toolchain provides
-it). **Not allowed:** anything C++23-only (INV-020).
+initializers, `constexpr`/`consteval`, `std::bit_cast`, `std::format`/`std::print`, `std::expected`,
+`std::mdspan`. **Verify a specific C++23 library facility exists in GCC 14.2 before depending on it**
+(INV-001, INV-020) — some are still incomplete.
 
 ---
 
@@ -291,8 +298,12 @@ INV-001 requires consulting the latest official documentation. When you need an 
 # Host build + unit tests (fast feedback, mocks only)
 cmake --preset host && cmake --build --preset host && ctest --preset host
 
-# Cross build for the Pi (real deployment)
-scripts/cross_build.sh            # produces build/aarch64/lumina
+# One-time / refresh the target sysroot from the Pi (needs rsync + ssh; gitignored output)
+scripts/sync_sysroot.sh --host pi@<pi-host>       # -> cmake/rpi-sysroot/
+
+# Cross build for the Pi (real deployment; requires cross toolchain + cmake/rpi-sysroot)
+cmake --preset aarch64 && cmake --build --preset aarch64   # produces build/aarch64/lumina
+# See docs/CROSS_COMPILE.md for the first-timer walkthrough and the Arch --sysroot gotcha.
 
 # Model export (laptop; needs ultralytics/Python tooling)
 scripts/export_models.sh
@@ -340,7 +351,7 @@ A task is done when **all** of the following hold:
 
 - ❌ Assuming anything instead of consulting docs or asking (INV-001).
 - ❌ Changing/violating an invariant without explicit user approval.
-- ❌ Using C++23-only features (INV-020).
+- ❌ Using library features not yet available in GCC 14.2 without verifying (INV-020).
 - ❌ Adding a GUI, desktop, or OpenCV HighGUI to the runtime (INV-021).
 - ❌ Introducing cloud/network calls in the core path (INV-003, INV-034).
 - ❌ Naked `new`/`delete`, C-style casts, or `using namespace` in headers.
