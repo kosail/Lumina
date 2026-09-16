@@ -1,0 +1,38 @@
+# Lúmina patch for OHF-Voice/piper1-gpl `libpiper/src/piper.cpp`.
+#
+# WHY: libpiper hard-codes the ONNX Runtime thread counts to 1
+# (`SetIntraOpNumThreads(1)` / `SetInterOpNumThreads(1)`), which leaves Piper
+# synthesis single-threaded and costs ~3.5 s per short phrase on the 4-core A53.
+# This patch makes the intra-op thread count configurable via the
+# PIPER_NUM_THREADS environment variable (default 3, i.e. one core left for
+# capture/other work); inter-op stays 1 because the graph runs sequentially.
+#
+# Apply with:  git apply   (or)   patch -p1 -F3 -l
+# See CHG-0028 and scripts/5-build_libpiper.sh.
+--- a/libpiper/src/piper.cpp
++++ b/libpiper/src/piper.cpp
+@@ -5,4 +5,5 @@
+ #include <array>
+ #include <cstddef>
++#include <cstdlib>
+ #include <filesystem>
+ #include <fstream>
+@@ -263,7 +263,17 @@
+   synth->session_options.DisableCpuMemArena();
+   synth->session_options.DisableMemPattern();
+   synth->session_options.DisableProfiling();
+-  synth->session_options.SetIntraOpNumThreads(1);
++  // --- Lúmina: allow multiple intra-op threads so Piper is not single-threaded ---
++  // Default 3 (leave one of the four A53 cores for capture/other work). Override
++  // with PIPER_NUM_THREADS. See CHG-0028.
++  int piper_intra_threads = 3;
++  if (const char *env_threads = std::getenv("PIPER_NUM_THREADS")) {
++    const int parsed = std::atoi(env_threads);
++    if (parsed > 0) {
++      piper_intra_threads = parsed;
++    }
++  }
++  synth->session_options.SetIntraOpNumThreads(piper_intra_threads);
+   synth->session_options.SetInterOpNumThreads(1);
+   synth->session_options.SetGraphOptimizationLevel(
+       GraphOptimizationLevel::ORT_ENABLE_BASIC);

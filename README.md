@@ -71,11 +71,12 @@ src/
   processing/   distance heuristic
   sensors/      IProximitySensor + NullProximitySensor (future VL53L0X)
   alerts/       alert arbiter (priority, cooldown, preemption)
-  audio/        Piper TTS wrapper, BlueALSA audio sink
+  audio/        Piper TTS wrapper (ITtsEngine), BlueALSA audio sink (IAudioSink)
+  app/          pipeline orchestrator + Spanish describer
   i18n/         Spanish message catalog
   telemetry/    optional UDP telemetry
 models/         yolo11n_ncnn/, face/, voices/
-scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, enroll_face.sh, bt_setup.sh
+scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, enroll_face.sh, bt_setup.sh
 tests/          unit tests (doctest) and on-device benchmarks
 cmake/          aarch64 toolchain and find-modules
 ```
@@ -130,6 +131,7 @@ Model files are not committed. Export/download them with:
 ```bash
 scripts/3-export_models.sh      # YOLO11n -> NCNN (320x256 + comparison sizes)
 scripts/4-fetch_onnxruntime.sh  # official prebuilt ONNX Runtime (aarch64) for libpiper
+scripts/6-fetch_voices.sh       # pinned es_MX Piper voice (Spanish TTS)
 ```
 
 ## Configuration
@@ -140,7 +142,10 @@ Compile-time options (defaults shown):
 |--------|---------|---------|
 | `LUMINA_FACE_EMBEDDER` | `sface` | Face embedding model (`sface` or `mobilefacenet`) |
 | `LUMINA_INFER_PRECISION` | `fp16` | Inference precision (`fp16` or `int8`, benchmark-gated) |
-| `LUMINA_INFER_SIZE` | `320` | Detector input size in pixels |
+| `LUMINA_INFER_WIDTH` / `LUMINA_INFER_HEIGHT` | `320` / `256` | Detector input size (see `docs/PERFORMANCE.md`) |
+| `LUMINA_ENABLE_LIBCAMERA` | `OFF` | Build the libcamera capture path |
+| `LUMINA_ENABLE_NCNN` | `OFF` | Build the NCNN detector path |
+| `LUMINA_ENABLE_AUDIO` | `OFF` | Build the Piper TTS + ALSA/bluealsa path |
 | `LUMINA_ENABLE_PROXIMITY` | `OFF` | Build the (future) proximity sensor path |
 | `LUMINA_ENABLE_TELEMETRY` | `OFF` | Build the optional UDP telemetry path |
 
@@ -151,6 +156,14 @@ Compile-time options (defaults shown):
 ```
 
 Audio is routed to the paired bone-conduction earbuds automatically at startup.
+
+Runtime environment variables (all optional):
+
+| Variable | Meaning |
+|----------|---------|
+| `LUMINA_LOG_LEVEL` | `trace`/`debug`/`info`/`warn`/`error`/`off` (default `info`) |
+| `PIPER_NUM_THREADS` | Piper/ONNX Runtime intra-op threads (default 3) |
+| `LUMINA_PHRASE_CACHE_DIR` | On-disk TTS phrase cache directory (default `$HOME/.cache/lumina/phrase-cache`) |
 
 ## Testing and benchmarks
 

@@ -12,6 +12,9 @@ CMakeUserPresets.json
 # Ignore the contents but keep the directory placeholder trackable.
 /third_party/*
 !/third_party/.gitkeep
+# ...but DO track the vendored patches we author (they are source, not downloads).
+!/third_party/patches/
+!/third_party/patches/**
 
 # Cross-compile sysroot (large tree; regenerate from the Pi, never commit).
 /cmake/rpi-sysroot/

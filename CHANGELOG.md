@@ -706,7 +706,7 @@
   date: 2026-09-16
   agent: opencode/deepseek-flash
   type: decision
-  status: proposed
+  status: applied
   invariants: [INV-022, INV-023, INV-070]
   supersedes: null
   summary: >-
@@ -730,4 +730,595 @@
     confirm the tarball layout (include/ + lib/libonnxruntime.so), and verify libonnxruntime.so loads
     on the Pi before wiring libpiper. Fall back to a lower ORT tag or a source build only if the
     prebuilt fails on the A53.
+
+# ---------------------------------------------------------------------------
+# CHG-0020 — Vertical-slice audio: interfaces, PiperTts, AlsaSink, pipeline
+# ---------------------------------------------------------------------------
+- id: CHG-0020
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-030, INV-031, INV-032, INV-051, INV-052, INV-060, INV-070]
+  supersedes: null
+  summary: >-
+    Implemented the Day 1-2 vertical slice (camera -> NCNN -> Piper ES -> bluealsa) in code:
+    IAudioSink/ITtsEngine interfaces, PiperTts (libpiper C API, streaming, interruptible),
+    AlsaSink (libasound -> bluealsa PCM), pure Spanish describer, a threaded Pipeline
+    (one jthread per stage, bounded queues), main.cpp wiring, mocks + host tests, a new
+    LUMINA_ENABLE_AUDIO CMake option, and scripts/5-build_libpiper.sh with a vendored
+    toolchain-forwarding patch.
+  rationale: >-
+    Keeps hardware behind interfaces (INV-030) so describer/pipeline logic is host-testable, and
+    isolates GPL-3.0 Piper behind ITtsEngine as a SHARED library (INV-060). The libpiper build needs
+    two workarounds, both encoded: (1) its espeak-ng ExternalProject does not inherit our toolchain,
+    so the vendored patch forwards CMAKE_TOOLCHAIN_FILE/SYSROOT/compilers (else an x86-64
+    libespeak-ng.a); (2) our toolchain forces CMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY, so the script
+    pre-sets ONNXRUNTIME_LIB to stop libpiper's find_library from being re-rooted into the sysroot.
+    The pipeline uses a simple newest-wins/interrupt policy for the slice; the full arbiter is Day 3.
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/audio_sink.hpp
+    - Lumina-BETA-RPI-2W/src/audio/tts_engine.hpp
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.hpp
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.cpp
+    - Lumina-BETA-RPI-2W/src/audio/bluealsa_sink.hpp
+    - Lumina-BETA-RPI-2W/src/audio/bluealsa_sink.cpp
+    - Lumina-BETA-RPI-2W/src/app/describer.hpp
+    - Lumina-BETA-RPI-2W/src/app/describer.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.hpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/mocks/mock_audio_sink.hpp
+    - Lumina-BETA-RPI-2W/tests/mocks/mock_tts_engine.hpp
+    - Lumina-BETA-RPI-2W/tests/test_describer.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/scripts/5-build_libpiper.sh
+    - Lumina-BETA-RPI-2W/third_party/patches/libpiper-toolchain.patch
+    - Lumina-BETA-RPI-2W/.gitignore
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Run scripts/5-build_libpiper.sh (spike first): confirm espeak-ng cross-builds (watch for it
+    running target binaries for data), that libpiper.so is aarch64, and whether the piper CLI
+    subdirectory must be disabled. Then host build+tests (ctest --preset host) and the aarch64 build
+    with LUMINA_ENABLE_LIBCAMERA/NCNN/AUDIO=ON. Deploy libpiper.so*, libonnxruntime.so.1.30.0, and
+    espeak-ng-data to the Pi, run the slice over bluealsa, and measure INV-051 latency / INV-052 RSS
+    / under-co-load FPS at the Day-2 gate. Not yet compiled on any platform.
+
+# ---------------------------------------------------------------------------
+# CHG-0021 — Decision: es_ES voice as a temporary stand-in for the slice
+# ---------------------------------------------------------------------------
+- id: CHG-0021
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-042, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Accepted models/voices/es_ES-sharvard-medium.onnx (Spain Spanish, 22050 Hz, 76.7 MB) as a
+    temporary stand-in to bring up and gate the vertical slice, while a real es_MX voice is fetched
+    by the user.
+  rationale: >-
+    INV-042 requires Spanish es_MX. es_ES is the same language and the same Pipeline/libpiper path,
+    so it is sufficient to prove the Day-2 gate; it is explicitly temporary. The 76.7 MB fp32 model
+    is a memory risk against INV-052, so a smaller es_MX voice (medium/low) should also be evaluated
+    for RSS.
+  files:
+    - Lumina-BETA-RPI-2W/models/voices/es_ES-sharvard-medium.onnx
+    - Lumina-BETA-RPI-2W/models/voices/es_ES-sharvard-medium.onnx.json
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Replace with a pinned es_MX voice before the demo/final, verify its sample rate and license, and
+    record the swap plus RSS impact in a later entry.
+
+# ---------------------------------------------------------------------------
+# CHG-0022 — Fix: generate espeak-ng data with a native host build
+# ---------------------------------------------------------------------------
+- id: CHG-0022
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-023, INV-060, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed scripts/5-build_libpiper.sh so the cross build completes. The first run built an aarch64
+    libpiper.so and installed the ONNX Runtime libs, then failed at the libpiper install step because
+    espeak-ng's compiled data directory was never produced. The script now builds the compiled
+    espeak-ng-data with a NATIVE host build of the same espeak-ng tag and stages it into the cross
+    install tree before libpiper's install; the completion check also requires the data marker.
+  rationale: >-
+    espeak-ng includes cmake/data.cmake only under `if (COMPILE_INTONATIONS AND NOT
+    CMAKE_CROSSCOMPILING)` (espeak-ng/CMakeLists.txt:18). That file both generates the compiled data
+    (running the espeak-ng binary: --compile-intonations/--compile-phonemes/--compile=<lang>) and
+    installs it. Cross-compiling skips it, so libpiper's `install(DIRECTORY
+    ${ESPEAKNG_DATA_SRC})` had no source. The data compiler cannot run as an aarch64 binary during
+    the cross build, and the compiled data is little-endian/platform-independent (x86-64 and aarch64
+    agree), so a native build of the pinned tag produces correct data for the Pi. This adds no new
+    runtime dependency (INV-022) and honors INV-023 (the native build runs on the laptop, not the Pi).
+  files:
+    - Lumina-BETA-RPI-2W/scripts/5-build_libpiper.sh
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Re-run scripts/5-build_libpiper.sh (no --force needed; the data marker now gates completion).
+    Confirm third_party/libpiper/share/espeak-ng-data/phondata exists and libpiper.so is aarch64.
+    If host data ever mismatches, build/verify espeak-ng data against the pinned tag 212928b (1.52.0.1).
+
+# ---------------------------------------------------------------------------
+# CHG-0023 — Fix: correct Spanish plurals via an explicit i18n catalog
+# ---------------------------------------------------------------------------
+- id: CHG-0023
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-042, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed describeDetections producing an incorrect plural ("camiónes") for accent-shifting nouns.
+    Added spanishPlural(ObjectClass) to the i18n catalog (all 12 spoken classes) and switched the
+    describer from a rule-based pluraliser to that table. Host tests now cover camión->camiones,
+    autobús->autobuses and sofá->sofás.
+  rationale: >-
+    Spanish plurals are not rule-based: "camión"->"camiones" and "autobús"->"autobuses" drop the
+    accent (the plural becomes llana), while "sofá"->"sofás" keeps it. A suffix rule (+s/+es) cannot
+    express this, and the beta's noun set is small and fixed, so an explicit table is both correct and
+    simpler. It also keeps all Spanish strings in the i18n module (INV-042). The bug surfaced because
+    test_describer's "consonant-ending noun" case had asserted the wrong form; the test was corrected
+    alongside the code.
+  files:
+    - Lumina-BETA-RPI-2W/src/i18n/es.hpp
+    - Lumina-BETA-RPI-2W/src/i18n/es.cpp
+    - Lumina-BETA-RPI-2W/src/app/describer.cpp
+    - Lumina-BETA-RPI-2W/tests/test_describer.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Re-run host tests (expect all green) and the aarch64 build. When the es_MX voice replaces the
+    es_ES stand-in (CHG-0021), revisit only if labels/plurals need regional wording.
+
+# ---------------------------------------------------------------------------
+# CHG-0024 — Fix: aarch64 compile errors in the audio path and main.cpp
+# ---------------------------------------------------------------------------
+- id: CHG-0024
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-030, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed the first aarch64 compile of the audio path. PiperTts and AlsaSink now define their real
+    nested pimpl types (PiperTts::Impl / AlsaSink::Impl) instead of differently-named anonymous
+    classes, and main.cpp fully qualifies the lumina:: namespaces.
+  rationale: >-
+    The headers forward-declare `class Impl;` and hold `std::unique_ptr<Impl>`, but the .cpp files
+    defined `PiperTtsImpl`/`AlsaSinkImpl` in an anonymous namespace, leaving Impl incomplete (the
+    errors were "invalid use of incomplete type" and the unique_ptr conversion/SFINAE failures).
+    main.cpp used bare `core::`/`capture::`/`vision::`/`audio::`/`app::`, which only resolve inside
+    namespace lumina; the host build did not catch either because LUMINA_ENABLE_AUDIO is off there.
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.cpp
+    - Lumina-BETA-RPI-2W/src/audio/bluealsa_sink.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Re-run the aarch64 build. Watch for further first-compile issues in the ALSA calls (the rest of
+    the file compiled only up to the pimpl error). The "Could NOT find OpenMP" line during configure
+    is benign (ncnn is built with SIMPLEOMP; the detector already linked this way).
+
+# ---------------------------------------------------------------------------
+# CHG-0025 — Fix: silence (aborted utterances) + slice instrumentation
+# ---------------------------------------------------------------------------
+- id: CHG-0025
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-031, INV-032, INV-051, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed "person detected but zero audio" on the Pi. inferenceLoop no longer sets m_stopSpeech on
+    every enqueue (it aborted each utterance before the first chunk was written); m_stopSpeech is now
+    only a shutdown/preemption signal. speechLoop drains after each phrase instead of dropping the
+    buffer, phrases must persist for a couple of frames (hysteresis) before being spoken, and the
+    slice now logs speech start, event->audible latency, sample counts, a 5-second FPS/RSS line, and
+    honours a LUMINA_LOG_LEVEL environment variable.
+  rationale: >-
+    On-device evidence: aplay -D bluealsa works and the app triggered the ALSA path only when a person
+    appeared, yet nothing was audible while AlsaSink::stop() (snd_pcm_drop + prepare) cycled
+    repeatedly. Root cause was the interrupt design: pipeline.cpp set m_stopSpeech=true on every
+    enqueue, and PiperTts::synthesize checks it at the top of every chunk, so any new detection during
+    synthesis (flickering person counts bypass the exact-string de-dup) aborted the utterance before a
+    single sample was written, producing the drop/prepare spam and silence. Letting utterances finish
+    (drain instead of drop, capacity-1 queue keeps the newest phrase) restores audio and is the
+    correct slice behaviour; the real arbiter on Day 3 will set m_stopSpeech only for safety
+    preemption. The new INFO instrumentation is required to verify the fix and to measure INV-051
+    (event->audible) and INV-052 (RSS) at the Day-2 gate.
+  files:
+    - Lumina-BETA-RPI-2W/src/app/pipeline.hpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/src/audio/audio_sink.hpp
+    - Lumina-BETA-RPI-2W/src/audio/bluealsa_sink.hpp
+    - Lumina-BETA-RPI-2W/src/audio/bluealsa_sink.cpp
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/mocks/mock_audio_sink.hpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host (tests) and aarch64, redeploy the binary, and run with LUMINA_LOG_LEVEL=debug.
+    Expect: "speech: 'Veo 1 persona.'", "Piper: wrote N samples", and "spoken: event->audible X ms",
+    plus audible speech in the buds and a 5s FPS/RSS line. If audio is still silent, writes will now
+    surface as ALSA errors; fallback is to convert Piper's float32 to S16_LE in AlsaSink (the format
+    aplay -D bluealsa uses). Record the gate numbers in docs/PERFORMANCE.md.
+
+# ---------------------------------------------------------------------------
+# CHG-0026 — Fix: dropped final Piper chunk (still no audio)
+# ---------------------------------------------------------------------------
+- id: CHG-0026
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-032, INV-051, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed PiperTts::synthesize discarding the final audio chunk. The loop now processes each chunk
+    before honoring PIPER_DONE, so short one-clause phrases actually reach the sink. Added a Debug
+    line with samples/phoneme ids/last flag per chunk.
+  rationale: >-
+    On-device evidence: synthesis took ~3.5 s but reported "wrote 0 samples", and BlueALSA showed
+    drain/start with no data. libpiper's piper_synthesize_next() returns the final chunk together with
+    PIPER_DONE (libpiper/src/piper.cpp:742 `return chunk->is_last ? PIPER_DONE : PIPER_OK`), and our
+    loop broke on PIPER_DONE before writing, so the whole utterance (a single chunk for one clause)
+    was dropped. This was not the ALSA path (aplay -D bluealsa works) nor phonemization (start
+    succeeded). The library README example has the same pitfall, hence the explicit note in the code.
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host+aarch64, redeploy the binary, and confirm audible speech. Then address INV-051: the
+    observed ~3.5 s synthesis for a short phrase exceeds the < 600 ms alert budget; candidates are a
+    low/x_low es_MX voice and/or pre-rendering our small fixed phrase set.
+
+# ---------------------------------------------------------------------------
+# CHG-0027 — Fix: repeated utterances failed with EBADFD after drain
+# ---------------------------------------------------------------------------
+- id: CHG-0027
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-032, INV-051, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed the second and later utterances failing with "ALSA: write failed: File descriptor in bad
+    state" (EBADFD). AlsaSink now (re)prepares the PCM before writing when its state is not
+    RUNNING/PREPARED, prepares again after snd_pcm_drain(), and re-prepares once as a last-resort
+    recovery on a failed write.
+  rationale: >-
+    On-device evidence: the first phrase played, then every later phrase logged EBADFD. snd_pcm_drain()
+    leaves the stream in SND_PCM_STATE_SETUP, and the previous per-utterance snd_pcm_drop()+prepare()
+    that used to reset it was removed in CHG-0025; snd_pcm_recover() does not handle EBADFD. Preparing
+    on demand fixes it and is robust to xrun/suspend states too.
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/bluealsa_sink.hpp
+    - Lumina-BETA-RPI-2W/src/audio/bluealsa_sink.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Confirm repeated person detections are all audible after the first.
+
+# ---------------------------------------------------------------------------
+# CHG-0028 — Perf: make Piper's ONNX Runtime intra-op threads configurable
+# ---------------------------------------------------------------------------
+- id: CHG-0028
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-051, INV-070]
+  supersedes: null
+  summary: >-
+    Added third_party/patches/libpiper-threads.patch so libpiper reads PIPER_NUM_THREADS (default 3)
+    for ONNX Runtime intra-op threads instead of hard-coding 1; updated scripts/5-build_libpiper.sh to
+    apply both vendored patches.
+  rationale: >-
+    libpiper/src/piper.cpp hard-codes SetIntraOpNumThreads(1)/SetInterOpNumThreads(1), leaving Piper
+    single-threaded on a 4-core A53 — the main cause of the ~3.5 s synthesis (INV-051). Default 3
+    leaves one core for capture/other work; the env var allows tuning without rebuilding. Inter-op
+    stays 1 because the graph is sequential.
+  files:
+    - Lumina-BETA-RPI-2W/third_party/patches/libpiper-threads.patch
+    - Lumina-BETA-RPI-2W/scripts/5-build_libpiper.sh
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Re-run scripts/5-build_libpiper.sh and redeploy libpiper.so; measure synthesis time and tune
+    PIPER_NUM_THREADS (2/3/4) against detection under co-load.
+
+# ---------------------------------------------------------------------------
+# CHG-0029 — es_MX voice fetch script + default voice (x_low)
+# ---------------------------------------------------------------------------
+- id: CHG-0029
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-042, INV-051, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Added scripts/6-fetch_voices.sh (pinned, SHA-256-verified) and switched the default voice to
+    models/voices/es_MX-ald-x_low.onnx. This satisfies INV-042 (es_MX) and supersedes the temporary
+    es_ES stand-in accepted in CHG-0021.
+  rationale: >-
+    There is no "low" for this voice; es_MX-ald-x_low (20.9 MB) is the smallest es_MX Piper model,
+    which cuts synthesis time and memory (INV-051/INV-052) versus the 76.7 MB es_ES medium stand-in.
+    The .onnx is verified by sha256 d8aae54a...; source is the official rhasspy/piper-voices repo.
+  files:
+    - Lumina-BETA-RPI-2W/scripts/6-fetch_voices.sh
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Run scripts/6-fetch_voices.sh, deploy the voice, and re-check labels/quality and RSS.
+
+# ---------------------------------------------------------------------------
+# CHG-0030 — On-disk phrase cache + latency metrics
+# ---------------------------------------------------------------------------
+- id: CHG-0030
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-051, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Added an on-disk phrase cache (CachingTts, an ITtsEngine decorator) that pre-renders our fixed
+    narration phrases and replays them instantly; PCM lives on disk (default /tmp/lumina-phrase-cache,
+    override LUMINA_PHRASE_CACHE_DIR) to respect the RAM budget. Added phraseCatalog()/formatCount()
+    to the describer, wired warming into main, and refined latency logging (event->speech-start,
+    "Piper: first audio after X ms", event->end).
+  rationale: >-
+    Even with more threads, live Piper synthesis is seconds, so the < 600 ms alert target (INV-051)
+    needs pre-rendered audio for our small, fixed vocabulary. Keeping samples on disk avoids holding
+    every phrase in RAM (INV-052); entries are one file per phrase keyed by an FNV-1a hash, validated
+    by a header + the phrase text, and written atomically. Uncached text falls through to live
+    synthesis, so behaviour is always correct.
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/caching_tts.hpp
+    - Lumina-BETA-RPI-2W/src/audio/caching_tts.cpp
+    - Lumina-BETA-RPI-2W/src/app/describer.hpp
+    - Lumina-BETA-RPI-2W/src/app/describer.cpp
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_caching_tts.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    On the Pi, confirm the first run renders the phrases (~seconds) and later runs skip rendering;
+    measure event->speech-start (should be ~0 on cache hits) and record the Day-2 gate numbers.
+
+# ---------------------------------------------------------------------------
+# CHG-0031 — Narration wording: articles, spelled numbers, noun-phrase style
+# ---------------------------------------------------------------------------
+- id: CHG-0031
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-042, INV-070]
+  supersedes: null
+  summary: >-
+    Reworked the Spanish narration to be a noun phrase about the environment, not a sentence about
+    the device: dropped "Veo", use the gendered article for one item ("una persona", "un carro"),
+    spell out numbers two..ten ("dos personas"), use "más de diez" above ten, and end with
+    "enfrente". Multi-item lists join as "a, b y c". Also switched labels coche->carro and
+    motocicleta->moto (es_MX).
+  rationale: >-
+    Lúmina narrates the environment for a blind user; "una persona enfrente" is the intended framing
+    rather than "Veo una persona". Spanish uses the article instead of the numeral one, and the user
+    asked to avoid digits so the TTS engine never normalizes numbers. Words live in the i18n catalog
+    (INV-042/FR-08).
+  files:
+    - Lumina-BETA-RPI-2W/src/i18n/es.hpp
+    - Lumina-BETA-RPI-2W/src/i18n/es.cpp
+    - Lumina-BETA-RPI-2W/src/app/describer.hpp
+    - Lumina-BETA-RPI-2W/src/app/describer.cpp
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.cpp
+    - Lumina-BETA-RPI-2W/tests/test_describer.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Listen on-device and confirm wording/pronunciation; revisit the "enfrente" direction once bbox
+    left/right/center and distance are available.
+
+# ---------------------------------------------------------------------------
+# CHG-0032 — Expand the default narration class subset
+# ---------------------------------------------------------------------------
+- id: CHG-0032
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-040, INV-042, INV-070]
+  supersedes: null
+  summary: >-
+    Expanded core::Config::classIds from {person} to all narrated classes
+    {0,1,2,3,5,7,15,16,24,56,57,60} (person, bicycle, car, motorcycle, bus, truck, cat, dog,
+    backpack, chair, couch, dining table).
+  rationale: >-
+    FR-01 requires chair/table/backpack/dog/cat (plus person) in the live demo, and the user asked to
+    narrate the full labeled set. More classes means more chatter; the Day-3 alert arbiter will add
+    priority/cooldown, and the list stays config-driven (FR-08) so it can be trimmed without code.
+  files:
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Evaluate narration churn indoors (chairs/tables) and trim classIds if needed.
+
+# ---------------------------------------------------------------------------
+# CHG-0033 — Persistent cache dir + lazy caching; warm range 1..3
+# ---------------------------------------------------------------------------
+- id: CHG-0033
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-051, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Moved the TTS phrase cache default to a persistent path (main() computes
+    $HOME/.cache/lumina/phrase-cache; override LUMINA_PHRASE_CACHE_DIR) because /tmp is a tmpfs on
+    the target OS, and added lazy caching: on a miss, CachingTts synthesizes through a TeeSink and
+    stores the audio for next time. phraseCatalog now warms counts 1..3 per class.
+  rationale: >-
+    /tmp being tmpfs means the cache would consume RAM and be lost on reboot (INV-052), so it must be
+    disk-backed and persistent. Eager warming is limited to counts 1..3 (classes x3) to keep the
+    one-time render short; counts >= 4 and multi-class phrases are cached lazily on first use, so the
+    runtime still converges to instant playback (INV-051) without a long first run.
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/caching_tts.hpp
+    - Lumina-BETA-RPI-2W/src/audio/caching_tts.cpp
+    - Lumina-BETA-RPI-2W/src/app/describer.hpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_caching_tts.cpp
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Verify the cache persists across reboots and that a second run logs "0 new phrase(s)".
+
+# ---------------------------------------------------------------------------
+# CHG-0034 — Fix: lazy cache never created its directory
+# ---------------------------------------------------------------------------
+- id: CHG-0034
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-051, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed CachingTts's lazy path: it now ensures the cache directory exists before storing, so a
+    first-heard phrase (no prior warm()) is written to disk and served from cache next time. Also
+    initialized the new PhraseCacheConfig::tag in the caching tests to silence
+    -Wmissing-field-initializers.
+  rationale: >-
+    Only warm() called std::filesystem::create_directories; the lazy miss path (synthesize -> store)
+    did not, so store() could not create its .tmp file and silently failed, making the same phrase
+    synthesize live every time. Found by the "a live miss is stored and then served from cache" test
+    (inner.calls() == 2).
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/caching_tts.cpp
+    - Lumina-BETA-RPI-2W/tests/test_caching_tts.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Re-run host tests; confirm the lazy-store test passes and no missing-field warnings remain.
+
+# ---------------------------------------------------------------------------
+# CHG-0035 — Day-2 gate verified end-to-end (vertical slice works)
+# ---------------------------------------------------------------------------
+- id: CHG-0035
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: test
+  status: applied
+  invariants: [INV-050, INV-051, INV-052, INV-070, INV-071]
+  supersedes: null
+  summary: >-
+    Recorded the Day-2 gate run: camera -> YOLO11n/NCNN -> Spanish -> Piper/es_MX -> bluealsa works
+    end-to-end and is audible in the paired buds. Full numbers in docs/PERFORMANCE.md section 10.
+  rationale: >-
+    Gate evidence (Pi Zero 2 W, voice es_MX-ald-x_low, 320x256, 4 NCNN threads, PIPER_NUM_THREADS=3):
+    phrase cache warmed 36 phrases once (~60 s) into $HOME/.cache/lumina/phrase-cache; RSS 157 MB
+    idle (189 MB transient during live synthesis); detection 4.0-4.3 FPS under co-load; cached alert
+    event->speech-start 247-271 ms and event->end ~2.3 s (utterance ~1.75 s); first multi-class phrase
+    (lazy miss) first audio 6.7 s then cached. Misclassification observed (person<->motorcycle) is a
+    model limitation, out of scope. Gate outcome: PASS, so the Python-nightly fallback is not needed.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Repetition churn and the INV-050 co-load gap are tracked separately (CHG-0036 and the Day-3
+    arbiter). Recall validation (section 7) remains outstanding.
+
+# ---------------------------------------------------------------------------
+# CHG-0036 — Decision: temporarily accept end-to-end detection below 5 FPS
+# ---------------------------------------------------------------------------
+- id: CHG-0036
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-050, INV-071, INV-070]
+  supersedes: null
+  summary: >-
+    Temporarily accept the full-pipeline detection rate (~4.0-4.3 FPS under co-load) as below the
+    >= 5 FPS INV-050 target, to protect the 6-day schedule. The target is NOT relaxed; this is an
+    explicit, temporary gap to be revisited only if time remains after the core MVP (Days 3-5).
+  rationale: >-
+    The isolated inference benchmark still meets the target (5.27 FPS at 320x256), so the gap is
+    integration overhead, not a detector regression. The user prioritizes finishing the project in
+    the remaining 5 days; experimentation (decimation, 256x256, NanoDet) is deferred. Documented in
+    INVARIANTS.md (INV-050 amendment) and docs/PERFORMANCE.md section 10 so the gap is never mistaken
+    for a met target.
+  files:
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Revisit only after the MVP is complete and time remains. Escalation unchanged: decimation
+    (infer every N frames) -> 256x256 -> NanoDet-Plus.
+
+# ---------------------------------------------------------------------------
+# CHG-0037 — Default voice: es_MX-claude-high (ald kept as fallback)
+# ---------------------------------------------------------------------------
+- id: CHG-0037
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-042, INV-051, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Switched the default Piper voice to es_MX-claude-high (63 MB, Mexican Spanish, "high"
+    quality), which the user auditioned and approved. scripts/6-fetch_voices.sh now downloads
+    claude-high plus the two ald fallbacks (medium, x_low), all SHA-256 verified.
+  rationale: >-
+    The es_MX-ald voices sounded poor (ald is a finetune of the Spain davefx voice on a small
+    community dataset). Enumeration of the official piper-voices repo confirmed there is no other
+    Mexican/Latin American voice at low/medium/x_low (es_AR only ships high; the rest are es_ES).
+    claude-high is the same ~63 MB as ald-medium, so no compression is needed; the phrase cache
+    absorbs its (re-measure TBD) synthesis cost and INV-051 at runtime. ald is retained as a
+    smaller fallback resource.
+  files:
+    - Lumina-BETA-RPI-2W/scripts/6-fetch_voices.sh
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Deploy es_MX-claude-high.onnx + .json to the Pi and re-measure synthesis time and RSS
+    (docs/PERFORMANCE.md section 10); the phrase cache re-renders automatically because the cache
+    tag includes the voice path.
 ```

@@ -447,6 +447,13 @@ configuration measures **4.87 FPS (< 5)**, so the shipping inference thread coun
 with **decimation** providing CPU headroom for capture and audio; `256×256` (~5.85 FPS at
 3 threads) is the fallback. Full evidence and analysis: `docs/PERFORMANCE.md`.
 
+**End-to-end measurement (CHG-0035/0036, 2026‑09‑16).** The full pipeline (libcamera + inference +
+Piper + bluealsa, 320×256, 4 threads) runs at **~4.0–4.3 FPS under co-load**, below the ≥ 5 FPS
+target, while the isolated inference benchmark still measures 5.27 FPS. This gap is **temporarily
+accepted by user decision (CHG-0036)** to protect the 6-day schedule; the **≥ 5 FPS rule is
+unchanged** and is revisited only if time remains after the core MVP (Days 3–5). Escalation is
+unchanged: **decimation** → `256×256` → NanoDet‑Plus. Evidence: `docs/PERFORMANCE.md` §10.
+
 ---
 
 ### INV-051 — End-to-end spoken-alert latency  `TARGET`

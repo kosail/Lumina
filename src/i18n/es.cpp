@@ -46,9 +46,9 @@ const char* spanishLabel(ObjectClass objectClass) noexcept {
         case ObjectClass::Bicycle:
             return "bicicleta";
         case ObjectClass::Car:
-            return "coche";
+            return "carro";
         case ObjectClass::Motorcycle:
-            return "motocicleta";
+            return "moto";
         case ObjectClass::Bus:
             return "autobús";
         case ObjectClass::Truck:
@@ -69,6 +69,85 @@ const char* spanishLabel(ObjectClass objectClass) noexcept {
             return "";
     }
     return "";
+}
+
+const char* spanishPlural(ObjectClass objectClass) noexcept {
+    switch (objectClass) {
+        case ObjectClass::Person:
+            return "personas";
+        case ObjectClass::Bicycle:
+            return "bicicletas";
+        case ObjectClass::Car:
+            return "carros";
+        case ObjectClass::Motorcycle:
+            return "motos";
+        case ObjectClass::Bus:
+            return "autobuses";
+        case ObjectClass::Truck:
+            return "camiones";
+        case ObjectClass::Cat:
+            return "gatos";
+        case ObjectClass::Dog:
+            return "perros";
+        case ObjectClass::Backpack:
+            return "mochilas";
+        case ObjectClass::Chair:
+            return "sillas";
+        case ObjectClass::Couch:
+            return "sofás";
+        case ObjectClass::DiningTable:
+            return "mesas";
+        case ObjectClass::Unknown:
+            return "";
+    }
+    return "";
+}
+
+const char* indefiniteArticle(ObjectClass objectClass) noexcept {
+    switch (objectClass) {
+        case ObjectClass::Person:
+        case ObjectClass::Bicycle:
+        case ObjectClass::Motorcycle:
+        case ObjectClass::Backpack:
+        case ObjectClass::Chair:
+        case ObjectClass::DiningTable:
+            return "una";
+        case ObjectClass::Car:
+        case ObjectClass::Bus:
+        case ObjectClass::Truck:
+        case ObjectClass::Cat:
+        case ObjectClass::Dog:
+        case ObjectClass::Couch:
+            return "un";
+        case ObjectClass::Unknown:
+            return "";
+    }
+    return "";
+}
+
+const char* numberWord(int count) noexcept {
+    switch (count) {
+        case 2:
+            return "dos";
+        case 3:
+            return "tres";
+        case 4:
+            return "cuatro";
+        case 5:
+            return "cinco";
+        case 6:
+            return "seis";
+        case 7:
+            return "siete";
+        case 8:
+            return "ocho";
+        case 9:
+            return "nueve";
+        case 10:
+            return "diez";
+        default:
+            return nullptr;
+    }
 }
 
 }  // namespace lumina::i18n

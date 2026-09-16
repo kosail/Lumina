@@ -1,0 +1,26 @@
+# Lúmina patch for OHF-Voice/piper1-gpl `libpiper/CMakeLists.txt`.
+#
+# WHY: libpiper builds espeak-ng through `ExternalProject_Add`, and ExternalProject does
+# NOT inherit the parent CMake configure. Without forwarding our toolchain, espeak-ng is
+# configured for the build host (x86-64) and produces an x86-64 `libespeak-ng.a` that
+# cannot link into the aarch64 runtime. This hunk forwards the cross toolchain into the
+# espeak-ng sub-build. See CHG-0020 and scripts/5-build_libpiper.sh.
+#
+# Apply with:  git apply   (or)   patch -p1 -F3 -l
+--- a/libpiper/CMakeLists.txt
++++ b/libpiper/CMakeLists.txt
+@@ -41,5 +41,14 @@ ExternalProject_Add(espeak_ng_external
+         -DCMAKE_INSTALL_PREFIX=${ESPEAKNG_INSTALL_DIR}
+         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
++        # --- Lúmina: forward the cross toolchain into the espeak-ng sub-build ---
++        # ExternalProject does not inherit the parent toolchain file, so without these
++        # espeak-ng is configured for the build host (x86-64). See CHG-0020.
++        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
++        -DCMAKE_SYSROOT=${CMAKE_SYSROOT}
++        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
++        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
++        -DCMAKE_FIND_ROOT_PATH=${CMAKE_FIND_ROOT_PATH}
++        -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
+         -DBUILD_SHARED_LIBS:BOOL=OFF
+         -DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=ON
+         -DUSE_ASYNC:BOOL=OFF

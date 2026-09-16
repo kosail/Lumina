@@ -1,9 +1,11 @@
-# PERFORMANCE.md — Lúmina detection performance record
+# PERFORMANCE.md — Lúmina performance record
 
 > Measured-on-device evidence for the detection stage, the reasoning behind the
-> `320×256` target, and the fallback plan. Facts here are **measurements**, not
-> estimates; each was produced with `build/aarch64/tests/lumina_bench_fps` on the
-> real Raspberry Pi Zero 2 W. Read with `INVARIANTS.md` (INV‑050, INV‑051).
+> `320×256` target, the fallback plan, and the end-to-end pipeline run at the Day‑2
+> gate. Facts here are **measurements**, not estimates; each was produced on the
+> real Raspberry Pi Zero 2 W (the benchmark via `build/aarch64/tests/lumina_bench_fps`,
+> the pipeline via the `lumina` binary). Read with `INVARIANTS.md` (INV‑050, INV‑051,
+> INV‑052, INV‑071).
 
 ---
 
@@ -188,3 +190,46 @@ ssh pi@<pi-host> '~/lumina_bench_fps ~/yolo11n_ncnn_320x256 320 256 200 --thread
 Per-layer profiling (optional): build with `scripts/2-build_ncnn.sh --layer-benchmark`,
 configure with `-DLUMINA_NCNN_ROOT=<repo>/third_party/ncnn-bench`, and read the
 printed per-layer timings. Keep that instrumented binary off the demo path.
+
+---
+
+## 10. End-to-end pipeline (Day‑2 gate, CHG‑0035)
+
+Measured on the Pi Zero 2 W with the full runtime (libcamera capture + YOLO11n/NCNN +
+Piper/espeak‑ng + ALSA→bluealsa), voice `es_MX-ald-x_low`, 320×256 inference, 4 NCNN
+threads, `PIPER_NUM_THREADS=3`:
+
+```bash
+LD_LIBRARY_PATH=$PWD/third_party/libpiper/lib LUMINA_LOG_LEVEL=debug ./lumina \
+  models/yolo11n_ncnn_320x256 models/voices/es_MX-ald-x_low.onnx espeak-ng-data
+```
+
+> **Voice note (CHG‑0037):** the gate run above used `es_MX-ald-x_low`; the shipping
+> default is now **`es_MX-claude-high`** (better quality). These numbers have not yet
+> been re-measured with the new voice — synthesis time and RSS will differ somewhat.
+
+| Metric | Measured | Notes |
+|---|---|---|
+| Detection throughput (co-load) | **4.0–4.3 FPS** | below the ≥ 5 target — temporary, see below |
+| Detection latency (capture→description) | **247–288 ms** | from the per-frame DEBUG line |
+| RSS (idle) | **157 MB** | transient 189 MB during live synthesis (INV‑052 budget ~450 MB) |
+| Alert latency, cached phrase | **event→speech-start 247–271 ms** | plus Bluetooth (~150–300 ms) for INV‑051 |
+| Utterance playback | **~1.75 s** (38 656 samples @ 22 050 Hz) | `event→end` ≈ 2.3 s |
+| Phrase cache warm | **36 phrases ≈ 60 s** (one-time) | persisted at `$HOME/.cache/lumina/phrase-cache` |
+| First-heard multi-class phrase | **first audio 6.7 s**, then cached | lazy miss (not pre-warmed) |
+
+### Gate outcome
+Camera → NCNN → Piper → Bluetooth works end-to-end and is audible in the paired buds, so the
+**Day‑2 GO/NO‑GO gate (INV‑071) is PASS** and the hardened Python‑nightly fallback is not required.
+
+### INV‑050 caveat (temporary)
+Under full co-load the pipeline runs at **~4.3 FPS**, below the ≥ 5 FPS target (the isolated
+inference benchmark still measures 5.27 FPS). This gap is **temporarily accepted** to protect the
+6-day schedule (CHG‑0036). The target is unchanged; if time remains after the core MVP we escalate
+in order: **decimation** (infer every N frames) → **256×256** → NanoDet‑Plus.
+
+### Known limitations
+- YOLO11n at 320×256 confuses some classes (e.g. a person reported as a motorcycle). Acceptable
+  for the beta and out of scope for this stage; recall validation is §7.
+- While an object stays in view, the same phrase can repeat every ~2 s. The Day‑3 alert arbiter
+  (priority/cooldown/dedup, INV‑032/FR‑07) will own this.

@@ -39,6 +39,9 @@ option(LUMINA_ENABLE_TELEMETRY "Build the optional UDP telemetry path" OFF)    #
 option(LUMINA_ENABLE_LIBCAMERA "Build the libcamera capture path" OFF)         # INV-011
 # The NCNN detector path needs the cross-built static libncnn.a in third_party/ncnn.
 option(LUMINA_ENABLE_NCNN "Build the NCNN detector path" OFF)                  # INV-022
+# The Piper TTS + ALSA/bluealsa audio path needs libpiper (third_party/libpiper)
+# and libasound from the sysroot; OFF by default so host builds link neither.
+option(LUMINA_ENABLE_AUDIO "Build the Piper TTS + ALSA/bluealsa audio path" OFF) # INV-022, INV-060
 
 # Tests default ON so the laptop build exercises pure logic (AGENTS.md §9); the
 # aarch64 preset turns them OFF. Benchmarks run on the Pi and default OFF.
@@ -58,7 +61,10 @@ set(LUMINA_INFER_HEIGHT    "256"   CACHE STRING "Detector input height in pixels
 add_library(lumina_core STATIC
     src/core/logging.cpp
     src/i18n/es.cpp
-    src/vision/yolo11_decode.cpp)
+    src/vision/yolo11_decode.cpp
+    src/app/describer.cpp
+    src/app/pipeline.cpp
+    src/audio/caching_tts.cpp)  # describer/pipeline/caching_tts use interfaces only -> host-buildable
 
 # Let sources include project headers as "core/..." rather than relative paths.
 # PUBLIC so anything linking lumina_core inherits the same include path.
@@ -77,6 +83,7 @@ if(LUMINA_ENABLE_LIBCAMERA)
     pkg_check_modules(LIBCAMERA REQUIRED IMPORTED_TARGET libcamera)
     target_sources(lumina_core PRIVATE src/capture/libcamera_source.cpp)
     target_link_libraries(lumina_core PUBLIC PkgConfig::LIBCAMERA)
+    target_compile_definitions(lumina_core PUBLIC LUMINA_HAS_LIBCAMERA=1)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -98,6 +105,43 @@ if(LUMINA_ENABLE_NCNN)
         NO_CMAKE_FIND_ROOT_PATH)
     target_sources(lumina_core PRIVATE src/vision/ncnn_detector.cpp)
     target_link_libraries(lumina_core PUBLIC ncnn)
+    target_compile_definitions(lumina_core PUBLIC LUMINA_HAS_NCNN=1)
+endif()
+
+# ---------------------------------------------------------------------------
+# Optional Piper + ALSA/bluealsa audio path (INV-022, INV-060). libpiper is
+# GPL-3.0 and is linked as a SHARED library behind ITtsEngine: the boundary that
+# INV-060 requires. libasound comes from the target sysroot via pkg-config.
+# ---------------------------------------------------------------------------
+if(LUMINA_ENABLE_AUDIO)
+    set(LUMINA_LIBPIPER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libpiper" CACHE PATH
+        "libpiper install prefix (built by scripts/5-build_libpiper.sh)")
+    # NO_CMAKE_FIND_ROOT_PATH: our toolchain restricts library/package searches to
+    # the sysroot, which would hide this in-tree path (same reason as ncnn above).
+    find_path(LIBPIPER_INCLUDE_DIR piper.h
+        PATHS "${LUMINA_LIBPIPER_ROOT}/include" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+    find_library(LIBPIPER_LIBRARY piper
+        PATHS "${LUMINA_LIBPIPER_ROOT}/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+    if(NOT LIBPIPER_INCLUDE_DIR OR NOT LIBPIPER_LIBRARY)
+        message(FATAL_ERROR
+            "libpiper not found under ${LUMINA_LIBPIPER_ROOT}. Run scripts/5-build_libpiper.sh.")
+    endif()
+    add_library(libpiper::libpiper UNKNOWN IMPORTED)
+    set_target_properties(libpiper::libpiper PROPERTIES
+        IMPORTED_LOCATION "${LIBPIPER_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LIBPIPER_INCLUDE_DIR}")
+
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
+
+    target_sources(lumina_core PRIVATE
+        src/audio/piper_tts.cpp
+        src/audio/bluealsa_sink.cpp)
+    target_link_libraries(lumina_core PUBLIC libpiper::libpiper PkgConfig::ALSA)
+    # The shared libpiper needs libonnxruntime.so at runtime; help the linker
+    # resolve its NEEDED entry during our own link.
+    target_link_options(lumina_core PUBLIC "-Wl,-rpath-link,${LUMINA_LIBPIPER_ROOT}/lib")
+    target_compile_definitions(lumina_core PUBLIC LUMINA_HAS_AUDIO=1)
 endif()
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,9 @@ if(LUMINA_BUILD_TESTS)
         test_main.cpp
         test_bounded_queue.cpp
         test_config.cpp
-        test_yolo11_decode.cpp)
+        test_yolo11_decode.cpp
+        test_describer.cpp
+        test_caching_tts.cpp)
     # mocks live under tests/ and are included as "mocks/...", so tests/ must be on
     # the include path in addition to src/ (which lumina_core exposes publicly).
     target_include_directories(lumina_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

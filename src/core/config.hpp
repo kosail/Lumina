@@ -22,7 +22,10 @@ struct Config {
     InferPrecision precision = InferPrecision::Fp16;  // INV-012
     float scoreThreshold = 0.25F;                     // minimum detection confidence
     float nmsThreshold = 0.45F;                       // non-max-suppression IoU cutoff
-    std::vector<int> classIds{0};                     // COCO class subset; 0 = person
+    // COCO class ids we narrate (all classes with a Spanish label; FR-01). Person
+    // plus bicycle, car, motorcycle, bus, truck, cat, dog, backpack, chair, couch,
+    // dining table. Trim this if the narration is too chatty.
+    std::vector<int> classIds{0, 1, 2, 3, 5, 7, 15, 16, 24, 56, 57, 60};
     int faceStableFrames = 3;                         // frames before announcing a name
     float faceMatchThreshold = 0.50F;                 // embedding cosine similarity cutoff
 };

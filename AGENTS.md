@@ -93,7 +93,7 @@ Lumina-BETA-RPI-2W/
   CMakeLists.txt
   CMakePresets.json
   cmake/                     # toolchain-aarch64.cmake, FindBlueALSA.cmake, rpi-sysroot/ (gitignored)
-  third_party/               # ncnn (static) + ncnn-src, libpiper + onnxruntime
+  third_party/               # ncnn (static), libpiper + onnxruntime, patches/ (vendored)
   models/                    # yolo11n_ncnn/, face/, voices/
   src/
     main.cpp
@@ -103,10 +103,11 @@ Lumina-BETA-RPI-2W/
     processing/              # distance heuristic
     sensors/                 # proximity.hpp (IProximitySensor + Null), future vl53l0x
     alerts/                  # arbiter (priority, cooldown, preemption)
-    audio/                   # piper_tts, bluealsa_sink
+    audio/                   # piper_tts (ITtsEngine), bluealsa_sink (IAudioSink)
+    app/                     # pipeline orchestrator + Spanish describer
     i18n/                    # es message catalog
     telemetry/               # udp (optional, off by default)
-  scripts/                   # 1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, enroll_face.sh, bt_setup.sh
+  scripts/                   # 1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, enroll_face.sh, bt_setup.sh
   tests/                     # doctest unit tests + bench targets
   docs/                      # design notes (CROSS_COMPILE.md, PERFORMANCE.md)
 ```
@@ -315,6 +316,12 @@ scripts/3-export_models.sh
 
 # One-time: fetch the official prebuilt ONNX Runtime (aarch64) for libpiper -> third_party/onnxruntime
 scripts/4-fetch_onnxruntime.sh
+
+# One-time: cross-build libpiper (Piper C API) -> third_party/libpiper (needs network + patch)
+scripts/5-build_libpiper.sh
+
+# One-time: download the pinned es_MX voice -> models/voices (sha256-verified)
+scripts/6-fetch_voices.sh
 
 # On-device benchmarks (need LUMINA_ENABLE_NCNN=ON + LUMINA_BUILD_BENCH=ON)
 build/aarch64/tests/lumina_bench_fps <modelDir> <inputWidth> <inputHeight> [iterations] [--threads N]
