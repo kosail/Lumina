@@ -93,7 +93,7 @@ Lumina-BETA-RPI-2W/
   CMakeLists.txt
   CMakePresets.json
   cmake/                     # toolchain-aarch64.cmake, FindBlueALSA.cmake, rpi-sysroot/ (gitignored)
-  third_party/               # ncnn (static), libpiper + onnxruntime
+  third_party/               # ncnn (static) + ncnn-src, libpiper + onnxruntime
   models/                    # yolo11n_ncnn/, face/, voices/
   src/
     main.cpp
@@ -106,9 +106,9 @@ Lumina-BETA-RPI-2W/
     audio/                   # piper_tts, bluealsa_sink
     i18n/                    # es message catalog
     telemetry/               # udp (optional, off by default)
-  scripts/                   # sync_sysroot.sh, export_models.sh, enroll_face.sh, bt_setup.sh
+  scripts/                   # 1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, enroll_face.sh, bt_setup.sh
   tests/                     # doctest unit tests + bench targets
-  docs/                      # design notes
+  docs/                      # design notes (CROSS_COMPILE.md, PERFORMANCE.md)
 ```
 
 Keep new code inside the matching module. Do not create new top-level directories without asking.
@@ -299,17 +299,25 @@ INV-001 requires consulting the latest official documentation. When you need an 
 cmake --preset host && cmake --build --preset host && ctest --preset host
 
 # One-time / refresh the target sysroot from the Pi (needs rsync + ssh; gitignored output)
-scripts/sync_sysroot.sh --host pi@<pi-host>       # -> cmake/rpi-sysroot/
+scripts/1-sync_sysroot.sh --host pi@<pi-host>       # -> cmake/rpi-sysroot/
 
 # Cross build for the Pi (real deployment; requires cross toolchain + cmake/rpi-sysroot)
 cmake --preset aarch64 && cmake --build --preset aarch64   # produces build/aarch64/lumina
 # See docs/CROSS_COMPILE.md for the first-timer walkthrough and the Arch --sysroot gotcha.
 
-# Model export (laptop; needs ultralytics/Python tooling)
-scripts/export_models.sh
+# One-time: cross-build NCNN (static) into third_party/ncnn (laptop; needs network)
+scripts/2-build_ncnn.sh
+# Instrumented variant for per-layer profiling -> third_party/ncnn-bench
+scripts/2-build_ncnn.sh --layer-benchmark
 
-# On-device benchmarks
-tests/bench_fps ; tests/bench_latency
+# Model export (laptop; needs ultralytics/Python tooling)
+scripts/3-export_models.sh
+
+# One-time: fetch the official prebuilt ONNX Runtime (aarch64) for libpiper -> third_party/onnxruntime
+scripts/4-fetch_onnxruntime.sh
+
+# On-device benchmarks (need LUMINA_ENABLE_NCNN=ON + LUMINA_BUILD_BENCH=ON)
+build/aarch64/tests/lumina_bench_fps <modelDir> <inputWidth> <inputHeight> [iterations] [--threads N]
 ```
 
 ---

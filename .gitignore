@@ -40,7 +40,13 @@ Thumbs.db
 __pycache__/
 *.pyc
 .venv/
+.venv-models/
+
+# Ultralytics NCNN export leftovers at the repo root (model params/bin are ignored).
+/*_ncnn_model/
+/yolo11n*.pt
 
 # Do not commit private keys or secrets.
 *.pem
 *.key
+models/voices

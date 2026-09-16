@@ -142,6 +142,11 @@ The dot-product and FP16-processing extensions post-date ARMv8.0-A and are not p
 under Cortex-A53) and "AArch64" (ARMv8.4-A adds SDOT/UDOT; ARMv8.2-A adds optional half-precision
 *processing*); `RAW_PLAN.md` §2; user-verified CPU report (2026-09-16).
 
+**Deferred (CHG-0018).** INT8 was formally deferred by user decision (2026-09-16): the FP16 path
+already meets INV-050 at the approved input, and the A53 offers no arithmetic benefit, so the
+benchmark is off the beta critical path. This does not change the policy above — INT8 remains
+benchmark-gated and may be revisited after the Day-2 gate if memory/size pressure appears.
+
 **Changeability.** Not changeable (hardware); the precision choice is measured, not assumed.
 
 ---
@@ -287,7 +292,7 @@ ground truth when making build/performance decisions:
 | RAM | 512 MB (vendor spec sheet) |
 | Host cross-compiler | `aarch64-linux-gnu-g++` **GCC 14.2.1 20250405** (Arch package; built-in sysroot `/usr/aarch64-linux-gnu`, `lib64` layout) |
 | Host gotcha | The Arch cross toolchain **ignores `--sysroot` for library search**; the toolchain file must pass explicit `-L`/`-Wl,--sysroot`/`-rpath-link` (see `CHG-0008`, `docs/CROSS_COMPILE.md`) |
-| Sysroot provenance | rsync `pi:/usr` -> `cmake/rpi-sysroot/usr`, plus merged-`/usr` symlinks; built/refreshed by `scripts/sync_sysroot.sh` (gitignored, ~1.4 GB) |
+| Sysroot provenance | rsync `pi:/usr` -> `cmake/rpi-sysroot/usr`, plus merged-`/usr` symlinks; built/refreshed by `scripts/1-sync_sysroot.sh` (gitignored, ~1.4 GB) |
 | Target toolchain (sysroot) | GCC **14** (`usr/include/c++/14`) |
 | OpenCV | **4.10.0**; `objdetect/face.hpp` provides `FaceDetectorYN` + `FaceRecognizerSF` |
 | libcamera | **0.7** (`libcamera.so.0.7`) |
@@ -430,6 +435,17 @@ with inference decimated (not every frame).
 **Source.** `RAW_PLAN.md` §2/§8.
 
 **Changeability.** Report and get approval if the measured best is lower.
+
+**Amended by CHG-0014 (2026-09-16).** Verified on the Pi Zero 2 W: YOLO11n/NCNN
+measures **4.33 FPS at 320×320** and **2.73 FPS at 416×416** (4 threads), below the
+target. The approved detection input is therefore **320×256** (320 px wide), which
+keeps the same effective 320×240 resolution while removing letterbox padding (≈20 %
+less compute). The **≥ 5 FPS rule is unchanged**, and 320×256 **meets it: 5.27 FPS**
+(189.8 ms, 4 threads, measured 2026‑09‑16). Escalation order if the end-to-end pipeline
+drops below it: `256×256`, then NanoDet‑Plus (post‑gate, INV‑022 approval). The 3‑thread
+configuration measures **4.87 FPS (< 5)**, so the shipping inference thread count is **4**,
+with **decimation** providing CPU headroom for capture and audio; `256×256` (~5.85 FPS at
+3 threads) is the fallback. Full evidence and analysis: `docs/PERFORMANCE.md`.
 
 ---
 

@@ -432,4 +432,302 @@
     pipeline rpi/vc4, 640x480-RGB888/sRGB, stride 1920, single plane (921600 B), 4 buffers; 30
     frames in 1669.4 ms (~17.97 FPS capture-only, no inference). Next: NCNN cross-build + YOLO11n
     export + on-device benchmark (Increment 3).
+
+# ---------------------------------------------------------------------------
+# CHG-0012 — NCNN detector path: YOLO11n decode, NcnnDetector, benchmark
+# ---------------------------------------------------------------------------
+- id: CHG-0012
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-020, INV-021, INV-022, INV-030, INV-042, INV-050, INV-072]
+  supersedes: null
+  summary: >-
+    Added the NCNN YOLO11n detection path: a pure, host-tested output decoder
+    (yolo11_decode), a pimpl NcnnDetector implementing IDetector, a Spanish COCO
+    class catalog (i18n/es), an on-device FPS/RSS/temperature benchmark, and the
+    LUMINA_ENABLE_NCNN CMake wiring against third_party/ncnn.
+  rationale: >-
+    Day 0-1 requires the inference half of the pipeline and INV-050 evidence. NCNN is
+    cross-built by scripts/build_ncnn.sh into third_party/ncnn (no official Linux
+    aarch64 prebuilt exists) and linked via its CMake package (imported target `ncnn`,
+    which also carries Threads/pthread). The model is exported by scripts/export_models.sh
+    with `yolo export format=ncnn imgsz=320|416 quantize=16`. Inspection of the generated
+    .param (2026-09-16) showed the export ALREADY applies the DFL box decode and class
+    sigmoid and concatenates to 4+numClasses channels per anchor (84 for COCO); the anchor
+    count is baked per export (Reshape 0=2100 at 320, 0=3549 at 416), so the input must be
+    the matching square. The decoder is split from NCNN so the box/NMS math is unit-tested
+    on the host with no model. Blob names are read from the net (in0/out0) rather than
+    hardcoded. Blob dimensions are probed at runtime (whichever axis equals 4+numClasses is
+    the channel axis) so the code is robust to pnnx tensor lowering. The detector also forces
+    fp32 blob storage (ncnn defaults to fp16 storage, which Mat::row() would silently misread)
+    and validates the baked anchor count against the configured input size.
+  files:
+    - Lumina-BETA-RPI-2W/src/vision/yolo11_decode.hpp
+    - Lumina-BETA-RPI-2W/src/vision/yolo11_decode.cpp
+    - Lumina-BETA-RPI-2W/src/vision/ncnn_detector.hpp
+    - Lumina-BETA-RPI-2W/src/vision/ncnn_detector.cpp
+    - Lumina-BETA-RPI-2W/src/i18n/es.hpp
+    - Lumina-BETA-RPI-2W/src/i18n/es.cpp
+    - Lumina-BETA-RPI-2W/tests/test_yolo11_decode.cpp
+    - Lumina-BETA-RPI-2W/tests/bench_fps.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/.gitignore
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Run `cmake --preset host && cmake --build --preset host && ctest --preset host` (decoder
+    tests), then the aarch64 build with -DLUMINA_ENABLE_NCNN=ON -DLUMINA_BUILD_BENCH=ON, deploy
+    build/aarch64/tests/lumina_bench_fps with models/yolo11n_ncnn_320 and _416 to the Pi, and
+    record FPS/RSS/temp. Face recognition (YuNet/SFace) is deferred to Day 4.
+
+# ---------------------------------------------------------------------------
+# CHG-0013 — Performance tooling: bench --threads + instrumented NCNN build
+# ---------------------------------------------------------------------------
+- id: CHG-0013
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: chore
+  status: applied
+  invariants: [INV-001, INV-050, INV-070]
+  supersedes: null
+  summary: >-
+    Added a --threads N option to lumina_bench_fps, a --layer-benchmark mode to
+    scripts/2-build_ncnn.sh that installs an NCNN_BENCHMARK=ON build into a separate prefix
+    (third_party/ncnn-bench), and a LUMINA_NCNN_ROOT CMake cache variable to select the ncnn
+    prefix. Fixed a "$SRC" typo in the script's extraction branch and updated the AGENTS §9
+    command list to the numbered script names.
+  rationale: >-
+    On-device: 320px fp16 went 406 ms (single-threaded, because ncnn was built with
+    NCNN_OPENMP=OFF so -fopenmp was never emitted) -> 231 ms (~1.8x, 4.32 FPS) after
+    rebuilding with NCNN_OPENMP=ON + NCNN_SIMPLEOMP=ON; 416px ~367 ms (2.73 FPS). Setting
+    the CPU governor to performance and re-enabling fp16 storage both changed nothing, so the
+    remaining bottleneck is either SIMPLEOMP per-region synchronization overhead or a
+    compute-bound workload that scales poorly across the 4 A53 cores. A thread sweep
+    (--threads 1..4) quantifies scaling, and the instrumented build prints per-layer timings
+    to find hotspots. Results decide whether real libgomp, a smaller input, or INT8 is
+    warranted, or whether INV-050 must be restated with user approval.
+  files:
+    - Lumina-BETA-RPI-2W/tests/bench_fps.cpp
+    - Lumina-BETA-RPI-2W/scripts/2-build_ncnn.sh
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Run the thread sweep and the per-layer profile on the Pi and record results. Scripts were
+    renamed with numeric prefixes (1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh);
+    README, docs/CROSS_COMPILE.md and INVARIANTS still reference the old names and need a
+    follow-up pass.
+
+# ---------------------------------------------------------------------------
+# CHG-0014 — Detection input 320x256 (non-square) + performance record
+# ---------------------------------------------------------------------------
+- id: CHG-0014
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-001, INV-020, INV-022, INV-050, INV-070]
+  supersedes: null
+  summary: >-
+    Made the detector support a non-square input (width x height) and set the approved
+    target to 320x256; converted core::Config.inferSize into inferWidth/inferHeight; added a
+    docs/PERFORMANCE.md record of every on-device measurement; updated the export script to
+    emit 320x256 plus 256x256/320x320/416x416; reverted the ncnn build to SIMPLEOMP; and swept
+    the numbered script names through the docs. Amended INV-050 with the measured evidence.
+  rationale: >-
+    On-device tests (docs/PERFORMANCE.md) show YOLO11n/NCNN at 4.33 FPS (320x320) and 2.73 FPS
+    (416x416), below INV-050. The board (4x A53 @1GHz, single-channel LPDDR2) is the wall:
+    real libgomp vs SIMPLEOMP, OMP_WAIT_POLICY, governor=performance, and fp16 storage all
+    changed nothing, and a thread sweep showed only 1.75x on 4 cores (~40% serial). A 640x480
+    frame letterboxes to 320x240 regardless, so 320x320 wastes 25% of compute on padding;
+    exporting 320x256 keeps the exact 320x240 effective resolution while removing that waste
+    (~20% less compute, expected ~5.4 FPS). This satisfies INV-050 without lowering the input
+    resolution perceptibly, unlike 256x256 (which drops to 256x192).
+  files:
+    - Lumina-BETA-RPI-2W/src/vision/ncnn_detector.hpp
+    - Lumina-BETA-RPI-2W/src/vision/ncnn_detector.cpp
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/tests/bench_fps.cpp
+    - Lumina-BETA-RPI-2W/scripts/2-build_ncnn.sh
+    - Lumina-BETA-RPI-2W/scripts/3-export_models.sh
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/docs/CROSS_COMPILE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Confirm 320x256 measures >= 5 FPS on the Pi and record it in docs/PERFORMANCE.md. Run the
+    recall validation (256 vs 320x256 vs 416) before treating 320x256 as validated. If it
+    measures below 5 FPS, escalate per CHG-0015. The libgomp.so symlink the user added to the
+    sysroot is no longer needed and can be removed.
+
+# ---------------------------------------------------------------------------
+# CHG-0015 — Model-swap contingency decision (NanoDet post-gate; others rejected)
+# ---------------------------------------------------------------------------
+- id: CHG-0015
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-001, INV-022, INV-050, INV-071]
+  supersedes: null
+  summary: >-
+    Decided the detection-model strategy: keep YOLO11n at 320x256 as the target; keep a
+    documented, gated fallback to NanoDet-Plus (post-Day-2 gate only, and only if recall or
+    latency is insufficient, or headroom is needed); and reject YOLOv5, YOLO-FastestV2 and
+    MobileNet-SSD. INV-050 is NOT relaxed. Escalation order: 320x256 -> 256x256 -> NanoDet.
+  rationale: >-
+    The bottleneck is the Raspberry Pi Zero 2 W (bandwidth/compute), not the model family, so
+    a swap is at best ~1.5x, not a leap. YOLOv5n is less accurate than YOLO11n (28.4 vs 39.5
+    mAP50-95 @640) for ~30% fewer FLOPs; YOLO-FastestV2 is far weaker (COCO mAP@0.5 ~24%);
+    MobileNet-SSD has weaker small-object recall. NanoDet-Plus-m (27.0 mAP@320, 0.9 GFLOPs;
+    ncnn C++ demo exists) is the only credible alternative, but it needs ONNX->ncnn plus a new
+    GFL+FCOS decoder and a new dependency (INV-022), so it must not be attempted before the
+    Day-2 gate. The detector is already isolated behind IDetector, so the swap stays a drop-in.
+    Sources (accessed 2026-09-16): Ultralytics YOLO11 docs; NanoDet-Plus README; YOLO-FastestV2
+    README. Details and measured results: docs/PERFORMANCE.md.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Revisit only at/after the Day-2 gate. If NanoDet is pursued, it requires an INV-022
+    dependency approval and its own CHG entry documenting the decoder and validation.
+
+# ---------------------------------------------------------------------------
+# CHG-0016 — Verified: 320x256 meets INV-050 (5.27 FPS)
+# ---------------------------------------------------------------------------
+- id: CHG-0016
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: test
+  status: applied
+  invariants: [INV-050, INV-070]
+  supersedes: null
+  summary: >-
+    Recorded the verified on-device result for the approved 320x256 detection input:
+    189.83 ms / 5.27 FPS / 54.1 MB peak RSS / 48.9 C at 4 threads on the Pi Zero 2 W, which
+    satisfies INV-050 (>= 5 FPS at 320 px). Updated docs/PERFORMANCE.md and the INV-050
+    amendment accordingly, and queued a --threads 3 headroom check.
+  rationale: >-
+    Prevents relying on a predicted number. 320x256 keeps the same effective 320x240
+    resolution as 320x320 (the letterbox of a 640x480 frame) while removing ~20 % padding
+    compute; measured 5.27 FPS vs 4.33 FPS at 320x320. The margin over 5.0 FPS is only ~5 %,
+    and the bench is pure inference using all four cores, so a --threads 3 headroom check
+    (one core reserved for capture + audio) is required before the Day-2 gate; decimation and
+    the 256x256 fallback remain the mitigations if end-to-end throughput falls below target.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Run `lumina_bench_fps ~/yolo11n_ncnn_320x256 320 256 200 --threads 3` and record whether
+    it still clears 5 FPS, then complete the recall validation (256 vs 320x256 vs 416) from
+    docs/PERFORMANCE.md section 7.
+
+# ---------------------------------------------------------------------------
+# CHG-0017 — Decision: ship 320x256 with 4 inference threads + decimation
+# ---------------------------------------------------------------------------
+- id: CHG-0017
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-031, INV-050, INV-070]
+  supersedes: null
+  summary: >-
+    Resolved the CPU headroom question: the shipping detection config is 320x256 with 4
+    NCNN inference threads, CPU headroom supplied by decimation, with 256x256 as the ready
+    fallback. Recorded the measured 3-thread result (205.4 ms / 4.87 FPS, below INV-050) in
+    docs/PERFORMANCE.md and the INV-050 amendment.
+  rationale: >-
+    On-device: 320x256 at 4 threads = 5.27 FPS (189.8 ms, INV-050 met); at 3 threads = 4.87
+    FPS (205.4 ms), which is below the >= 5 FPS target because the A53 is already
+    bandwidth/compute-bound and cannot spare a whole core. Rather than relax INV-050 or drop
+    resolution, we keep 4 inference threads and rely on the architecture's decimation
+    (inference is bursty, one ~190 ms region per N frames, so capture and Piper run in the
+    gaps; capture is light - libcamera uses its own thread and our per-frame copy is ~1.2 MB).
+    If the end-to-end vertical slice misses 5 FPS under co-load, the approved escalation is
+    256x256 (6.33 FPS @4t, ~5.85 @3t), which clears the target with a core to spare.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Measure the end-to-end vertical slice (capture -> NCNN -> Piper -> bluealsa) FPS at the
+    Day-2 gate; if it stays >= 5 FPS, 320x256 is final, otherwise escalate to 256x256. Recall
+    validation (docs/PERFORMANCE.md section 7) is still outstanding.
+
+# ---------------------------------------------------------------------------
+# CHG-0018 — Decision: INT8 quantization formally deferred
+# ---------------------------------------------------------------------------
+- id: CHG-0018
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-012, INV-050, INV-070]
+  supersedes: null
+  summary: >-
+    Formally deferred INT8 quantization for the beta. The FP16 YOLO11n path already meets INV-050 at
+    the approved 320x256 input (5.27 FPS), and INV-012 establishes that INT8 gives no arithmetic
+    speedup on the Cortex-A53. Updated docs/PERFORMANCE.md section 8 and added a deferral note to
+    INV-012.
+  rationale: >-
+    RAW_PLAN Day 0-1 asked to benchmark fp16 vs int8, but INV-012 (no SDOT/UDOT on ARMv8.0-A) makes
+    int8 a size/bandwidth play only, and fp16 storage already showed no gain. Running it would spend
+    schedule on the critical path for no expected benefit, so this is a recorded deferral rather than
+    a silent omission. Policy is unchanged: INT8 stays benchmark-gated.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Revisit after the Day-2 gate only if memory/size pressure appears (e.g., RSS approaching
+    INV-052). No action on the Day 0-1 / Day 1-2 critical path.
+
+# ---------------------------------------------------------------------------
+# CHG-0019 — Decision: use the official ONNX Runtime aarch64 prebuilt
+# ---------------------------------------------------------------------------
+- id: CHG-0019
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: decision
+  status: proposed
+  invariants: [INV-022, INV-023, INV-070]
+  supersedes: null
+  summary: >-
+    Decided to use Microsoft's official prebuilt aarch64 ONNX Runtime tarball instead of
+    cross-building it. Pinned candidate: onnxruntime-linux-aarch64-1.30.0.tgz (GitHub release v1.30.0,
+    published 2026-09-10, 9.79 MB, sha256 e16a27a8ed330bbc698df7330b0cf56e722f354e3bcc92118682c74ef3c3e3da).
+    To be fetched into third_party/onnxruntime by a script and verified on the Pi before use.
+  rationale: >-
+    onnxruntime is the heaviest build in the plan and the main Day 1-2 schedule risk; the official
+    aarch64 prebuilt removes that risk (INV-023 prefers no heavy builds). onnxruntime is already part
+    of the INV-022 fixed stack as a libpiper dependency, so no new runtime dependency is introduced.
+    Status stays 'proposed' until the artifact is downloaded, sha256-verified, and libonnxruntime.so
+    loads on the Pi (glibc 2.41 / aarch64). Sources (accessed 2026-09-16): onnxruntime.ai/docs/install
+    (C/C++ CPU install = official *.tgz from GitHub releases); github.com/microsoft/onnxruntime
+    releases/tag/v1.30.0 (asset listing shows onnxruntime-linux-aarch64-1.30.0.tgz).
+  files:
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Add scripts/4-fetch_onnxruntime.sh (download + sha256 check + extract to third_party/onnxruntime),
+    confirm the tarball layout (include/ + lib/libonnxruntime.so), and verify libonnxruntime.so loads
+    on the Pi before wiring libpiper. Fall back to a lower ORT tag or a source build only if the
+    prebuilt fails on the A53.
 ```

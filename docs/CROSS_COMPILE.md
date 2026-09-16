@@ -20,7 +20,7 @@ goes**, **the symlinks it needs**, **how to verify it**, and finally **how to bu
 ## TL;DR (repeat users)
 
 ```sh
-scripts/sync_sysroot.sh --host pi@<pi-host>      # one-time / whenever the Pi changes
+scripts/1-sync_sysroot.sh --host pi@<pi-host>      # one-time / whenever the Pi changes
 cmake --preset aarch64 && cmake --build --preset aarch64
 scp build/aarch64/lumina pi@<pi-host>:~/
 ```
@@ -98,7 +98,7 @@ add in A3 out of the copy's way.
 The easy path is the helper script (it is just the manual command below plus A3 and A4):
 
 ```sh
-scripts/sync_sysroot.sh --host pi@<pi-host>
+scripts/1-sync_sysroot.sh --host pi@<pi-host>
 ```
 
 <details>
@@ -150,7 +150,7 @@ ln -sfn aarch64-linux-gnu/ld-linux-aarch64.so.1 usr/lib/ld-linux-aarch64.so.1
 - `usr/lib/ld-linux-aarch64.so.1 -> aarch64-linux-gnu/ld-linux-aarch64.so.1` lets the linker find
   the ELF interpreter, which the compiler references as `/lib/ld-linux-aarch64.so.1`.
 
-`ln -sfn` is idempotent, so running it again is safe. `scripts/sync_sysroot.sh` does this for you.
+`ln -sfn` is idempotent, so running it again is safe. `../scripts/1-sync_sysroot.sh` does this for you.
 
 ## A4. Verify the sysroot — the gate (do this BEFORE building)
 
@@ -158,7 +158,7 @@ A broken sysroot should fail here with a clear message, not deep inside CMake. Q
 the script:
 
 ```sh
-scripts/sync_sysroot.sh --check
+scripts/1-sync_sysroot.sh --check
 ```
 
 Manual anchor check (all of these must exist):
@@ -271,7 +271,7 @@ ldd ~/lumina        # every shared library must resolve ("not found" => a missin
 After `apt upgrade` on the Pi (or if you install another `-dev` package), re-run:
 
 ```sh
-scripts/sync_sysroot.sh --host pi@<pi-host>
+scripts/1-sync_sysroot.sh --host pi@<pi-host>
 ```
 
 This re-copies `/usr` and re-creates the A3 symlinks. We deliberately do **not** pass `--delete`,
@@ -305,13 +305,13 @@ compiler probe also succeeds). **Do not remove them.** This is recorded as `CHG-
 | `find_package(OpenCV)` fails | `OpenCVConfig.cmake` absent from the sysroot (see A4). |
 | `unrecognized command-line option '-std=c++23'` | Cross toolchain too old; must be GCC 14+. |
 | Link error about `GLIBCXX_3.x` at run time on the Pi | Host libstdc++ is newer than the Pi's; install a matching cross GCC (INV-025). |
-| `cmake --preset aarch64` fails at the compiler probe | Sysroot missing/broken; run `scripts/sync_sysroot.sh --check`. |
+| `cmake --preset aarch64` fails at the compiler probe | Sysroot missing/broken; run `scripts/1-sync_sysroot.sh --check`. |
 | `Host key verification failed` | First connection to the Pi; run `ssh pi@<pi-host>` once to accept the key. |
-| `scripts/sync_sysroot.sh: bad substitution` / `[[` errors | Run it with `bash`, not `sh` (it uses bash arrays). |
+| `scripts/1-sync_sysroot.sh: bad substitution` / `[[` errors | Run it with `bash`, not `sh` (it uses bash arrays). |
 
 ## C4. Related
 
-- `scripts/sync_sysroot.sh` — extract/refresh + verify the sysroot.
+- `../scripts/1-sync_sysroot.sh` — extract/refresh + verify the sysroot.
 - `cmake/toolchain-aarch64.cmake` — toolchain file (auto-detects `cmake/rpi-sysroot`).
 - `CMakePresets.json` — the `host` and `aarch64` presets.
 - `INVARIANTS.md` — INV-023 (cross-compile), INV-025 (verified environment).

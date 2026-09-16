@@ -20,7 +20,8 @@ if(LUMINA_BUILD_TESTS)
     add_executable(lumina_tests
         test_main.cpp
         test_bounded_queue.cpp
-        test_config.cpp)
+        test_config.cpp
+        test_yolo11_decode.cpp)
     # mocks live under tests/ and are included as "mocks/...", so tests/ must be on
     # the include path in addition to src/ (which lumina_core exposes publicly).
     target_include_directories(lumina_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -29,10 +30,9 @@ if(LUMINA_BUILD_TESTS)
     add_test(NAME lumina_tests COMMAND lumina_tests)
 endif()
 
-if(LUMINA_BUILD_BENCH)
+if(LUMINA_BUILD_BENCH AND LUMINA_ENABLE_NCNN)
     # Benchmark targets run on the Pi and report FPS/RSS/temperature (INV-050).
-    # bench_fps.cpp is added in a later increment; the option is wired now so the
-    # build switch exists end to end.
+    # They need the NCNN detector, hence the LUMINA_ENABLE_NCNN requirement.
     add_executable(lumina_bench_fps bench_fps.cpp)
     target_link_libraries(lumina_bench_fps PRIVATE lumina_core)
 endif()

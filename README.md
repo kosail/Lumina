@@ -75,7 +75,7 @@ src/
   i18n/         Spanish message catalog
   telemetry/    optional UDP telemetry
 models/         yolo11n_ncnn/, face/, voices/
-scripts/        sync_sysroot.sh, export_models.sh, enroll_face.sh, bt_setup.sh
+scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, enroll_face.sh, bt_setup.sh
 tests/          unit tests (doctest) and on-device benchmarks
 cmake/          aarch64 toolchain and find-modules
 ```
@@ -89,6 +89,7 @@ cmake/          aarch64 toolchain and find-modules
 | [`RAW_PLAN.md`](RAW_PLAN.md) | Execution schedule and stack rationale |
 | [`AGENTS.md`](AGENTS.md) | Operating manual: style, workflow, documentation rules |
 | [`CHANGELOG.md`](CHANGELOG.md) | Append-only, machine-readable change log |
+| [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Measured detection performance, resolution decision, fallback plan |
 
 Source-of-truth order: `INVARIANTS.md` > `SPECS.md` > `RAW_PLAN.md` > `AGENTS.md` > code.
 
@@ -107,7 +108,7 @@ ctest --preset host
 First time only, build the target sysroot from the Pi (needs `rsync` + `ssh`; ~1.4 GB, gitignored):
 
 ```bash
-scripts/sync_sysroot.sh --host pi@<pi-host>   # -> cmake/rpi-sysroot/
+scripts/1-sync_sysroot.sh --host pi@<pi-host>   # -> cmake/rpi-sysroot/
 ```
 
 Then, on the laptop:
@@ -127,7 +128,8 @@ symlinks, verification, deployment, troubleshooting, and the Arch `--sysroot` go
 Model files are not committed. Export/download them with:
 
 ```bash
-scripts/export_models.sh        # YOLO11n -> NCNN, YuNet/SFace, es_MX Piper voice
+scripts/3-export_models.sh      # YOLO11n -> NCNN (320x256 + comparison sizes)
+scripts/4-fetch_onnxruntime.sh  # official prebuilt ONNX Runtime (aarch64) for libpiper
 ```
 
 ## Configuration

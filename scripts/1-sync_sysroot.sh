@@ -145,6 +145,7 @@ if [[ -d "$DEST/usr/lib" ]]; then
     echo "==> Creating merged-/usr symlinks"
     ln -sfn usr/lib "$DEST/lib"
     ln -sfn aarch64-linux-gnu/ld-linux-aarch64.so.1 "$DEST/usr/lib/ld-linux-aarch64.so.1"
+    ln -sfn libgomp.so.1 "$DEST/usr/lib/aarch64-linux-gnu/libgomp.so"
 else
     echo "warning: ${DEST}/usr/lib is missing; skipping symlinks" >&2
 fi

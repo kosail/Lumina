@@ -37,6 +37,8 @@ option(LUMINA_ENABLE_TELEMETRY "Build the optional UDP telemetry path" OFF)    #
 # The libcamera capture path needs the target's libcamera. OFF by default so the
 # host/mock build links no camera libraries; enable for the on-device probe/runtime.
 option(LUMINA_ENABLE_LIBCAMERA "Build the libcamera capture path" OFF)         # INV-011
+# The NCNN detector path needs the cross-built static libncnn.a in third_party/ncnn.
+option(LUMINA_ENABLE_NCNN "Build the NCNN detector path" OFF)                  # INV-022
 
 # Tests default ON so the laptop build exercises pure logic (AGENTS.md §9); the
 # aarch64 preset turns them OFF. Benchmarks run on the Pi and default OFF.
@@ -45,7 +47,8 @@ option(LUMINA_BUILD_BENCH "Build on-device benchmark targets" OFF)
 
 set(LUMINA_FACE_EMBEDDER   "sface" CACHE STRING "Face embedder: sface | mobilefacenet")
 set(LUMINA_INFER_PRECISION "fp16"  CACHE STRING "Inference precision: fp16 | int8")
-set(LUMINA_INFER_SIZE      "320"   CACHE STRING "Detector input size in pixels")
+set(LUMINA_INFER_WIDTH     "320"   CACHE STRING "Detector input width in pixels")
+set(LUMINA_INFER_HEIGHT    "256"   CACHE STRING "Detector input height in pixels")
 
 # ---------------------------------------------------------------------------
 # Core library. Pipeline logic lives here so the executable and the host tests
@@ -53,7 +56,9 @@ set(LUMINA_INFER_SIZE      "320"   CACHE STRING "Detector input size in pixels")
 # Add new .cpp files here as modules are implemented.
 # ---------------------------------------------------------------------------
 add_library(lumina_core STATIC
-    src/core/logging.cpp)
+    src/core/logging.cpp
+    src/i18n/es.cpp
+    src/vision/yolo11_decode.cpp)
 
 # Let sources include project headers as "core/..." rather than relative paths.
 # PUBLIC so anything linking lumina_core inherits the same include path.
@@ -72,6 +77,27 @@ if(LUMINA_ENABLE_LIBCAMERA)
     pkg_check_modules(LIBCAMERA REQUIRED IMPORTED_TARGET libcamera)
     target_sources(lumina_core PRIVATE src/capture/libcamera_source.cpp)
     target_link_libraries(lumina_core PUBLIC PkgConfig::LIBCAMERA)
+endif()
+
+# ---------------------------------------------------------------------------
+# Optional NCNN detector path (INV-022). Links the static libncnn.a produced by
+# scripts/build_ncnn.sh; the imported target `ncnn` also carries Threads/pthread.
+# ---------------------------------------------------------------------------
+if(LUMINA_ENABLE_NCNN)
+    # Default to the normal ncnn install. Point at third_party/ncnn-bench (built by
+    # scripts/2-build_ncnn.sh --layer-benchmark) for per-layer profiling.
+    set(LUMINA_NCNN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ncnn" CACHE PATH
+        "ncnn install prefix (e.g. third_party/ncnn-bench for the instrumented build)")
+    # NO_CMAKE_FIND_ROOT_PATH is required: cmake/toolchain-aarch64.cmake sets
+    # CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY, which re-roots every package search
+    # into the sysroot. Without it, this in-tree path (outside the sysroot) is
+    # silently ignored and ncnn is reported missing.
+    find_package(ncnn REQUIRED
+        PATHS "${LUMINA_NCNN_ROOT}/lib/cmake/ncnn"
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH)
+    target_sources(lumina_core PRIVATE src/vision/ncnn_detector.cpp)
+    target_link_libraries(lumina_core PUBLIC ncnn)
 endif()
 
 # ---------------------------------------------------------------------------
