@@ -34,26 +34,65 @@ endif()
 # ---------------------------------------------------------------------------
 option(LUMINA_ENABLE_PROXIMITY "Build the optional proximity-sensor path" OFF) # INV-013, INV-033
 option(LUMINA_ENABLE_TELEMETRY "Build the optional UDP telemetry path" OFF)    # INV-034
+# The libcamera capture path needs the target's libcamera. OFF by default so the
+# host/mock build links no camera libraries; enable for the on-device probe/runtime.
+option(LUMINA_ENABLE_LIBCAMERA "Build the libcamera capture path" OFF)         # INV-011
+
+# Tests default ON so the laptop build exercises pure logic (AGENTS.md §9); the
+# aarch64 preset turns them OFF. Benchmarks run on the Pi and default OFF.
+option(LUMINA_BUILD_TESTS "Build host unit tests (doctest)" ON)
+option(LUMINA_BUILD_BENCH "Build on-device benchmark targets" OFF)
 
 set(LUMINA_FACE_EMBEDDER   "sface" CACHE STRING "Face embedder: sface | mobilefacenet")
 set(LUMINA_INFER_PRECISION "fp16"  CACHE STRING "Inference precision: fp16 | int8")
 set(LUMINA_INFER_SIZE      "320"   CACHE STRING "Detector input size in pixels")
 
 # ---------------------------------------------------------------------------
+# Core library. Pipeline logic lives here so the executable and the host tests
+# share exactly the same code; tests link this and need no hardware (INV-030).
+# Add new .cpp files here as modules are implemented.
+# ---------------------------------------------------------------------------
+add_library(lumina_core STATIC
+    src/core/logging.cpp)
+
+# Let sources include project headers as "core/..." rather than relative paths.
+# PUBLIC so anything linking lumina_core inherits the same include path.
+target_include_directories(lumina_core PUBLIC src)
+
+# Warn aggressively while the codebase is small; warnings are signals, not noise.
+target_compile_options(lumina_core PUBLIC -Wall -Wextra -Wpedantic)
+
+# ---------------------------------------------------------------------------
+# Optional libcamera capture source (INV-011). libcamera comes from the target
+# sysroot via pkg-config; when cross-compiling, CMakePresets points pkg-config at
+# cmake/rpi-sysroot (see the aarch64 preset's `environment`).
+# ---------------------------------------------------------------------------
+if(LUMINA_ENABLE_LIBCAMERA)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBCAMERA REQUIRED IMPORTED_TARGET libcamera)
+    target_sources(lumina_core PRIVATE src/capture/libcamera_source.cpp)
+    target_link_libraries(lumina_core PUBLIC PkgConfig::LIBCAMERA)
+endif()
+
+# ---------------------------------------------------------------------------
 # Executable. The binary is named `lumina` to match the documented output path
 # build/<preset>/lumina (AGENTS.md §9, RAW_PLAN.md §8).
 # ---------------------------------------------------------------------------
 add_executable(lumina src/main.cpp)
-
-# Let sources include project headers as "core/..." rather than relative paths.
-target_include_directories(lumina PRIVATE src)
-
-# Warn aggressively while the codebase is small; warnings are signals, not noise.
-target_compile_options(lumina PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(lumina PRIVATE lumina_core)
 
 # ---------------------------------------------------------------------------
-# Tests. Unit tests use doctest and run on the host with mocks (AGENTS.md §9).
-# Enabled once the first test sources and the doctest dependency exist (Day 0-1).
+# On-device capture probe (headless; INV-021). Built only with the capture path.
 # ---------------------------------------------------------------------------
-# enable_testing()
-# add_subdirectory(tests)
+if(LUMINA_ENABLE_LIBCAMERA)
+    add_executable(lumina_capture_test src/tools/capture_probe.cpp)
+    target_link_libraries(lumina_capture_test PRIVATE lumina_core)
+endif()
+
+# ---------------------------------------------------------------------------
+# Tests + benchmarks (host unit tests use doctest and mocks, AGENTS.md §9).
+# ---------------------------------------------------------------------------
+if(LUMINA_BUILD_TESTS OR LUMINA_BUILD_BENCH)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

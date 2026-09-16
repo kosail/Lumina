@@ -8,7 +8,8 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/host",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "LUMINA_BUILD_TESTS": "ON"
       }
     },
     {
@@ -17,9 +18,14 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/aarch64",
       "toolchainFile": "${sourceDir}/cmake/toolchain-aarch64.cmake",
+      "environment": {
+        "PKG_CONFIG_SYSROOT_DIR": "${sourceDir}/cmake/rpi-sysroot",
+        "PKG_CONFIG_LIBDIR": "${sourceDir}/cmake/rpi-sysroot/usr/lib/aarch64-linux-gnu/pkgconfig:${sourceDir}/cmake/rpi-sysroot/usr/share/pkgconfig"
+      },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "LUMINA_SYSROOT": "${sourceDir}/cmake/rpi-sysroot"
+        "LUMINA_SYSROOT": "${sourceDir}/cmake/rpi-sysroot",
+        "LUMINA_BUILD_TESTS": "OFF"
       }
     }
   ],

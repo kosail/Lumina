@@ -309,7 +309,6 @@
     Run `cmake --preset aarch64 && cmake --build --preset aarch64` on the host to confirm the
     preset path works end to end; then proceed to Day 0-1. A separate OpenCV/libcamera smoke target
     was intentionally NOT added in this change (deferred).
-```
 
 # ---------------------------------------------------------------------------
 # CHG-0009 — Redesign cross-compile guide; add sync_sysroot.sh
@@ -348,4 +347,89 @@
     Run scripts/sync_sysroot.sh --check on the host to confirm the anchors pass, and confirm the
     script exists on the machine with bash available (it uses bash arrays). The script itself was
     not executed in the agent container (no bash/rsync/ssh/network there).
+
+# ---------------------------------------------------------------------------
+# CHG-0010 — Host-testable foundation: core types, interfaces, tests
+# ---------------------------------------------------------------------------
+- id: CHG-0010
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-020, INV-030, INV-031, INV-072]
+  supersedes: null
+  summary: >-
+    Added the host-testable foundation: core value types (frame, detection, result, config, time),
+    the bounded drop-oldest queue (INV-031), the project logger, the ICamera and IDetector
+    interfaces, mock implementations, doctest unit tests, and a lumina_core static library that the
+    executable and the tests share.
+  rationale: >-
+    Capture and detection both depend on shared types and interface-first seams, and AGENTS §9
+    requires pure logic to be unit-tested on the host with mocks (INV-030, INV-072). Wiring tests
+    before hardware keeps feedback fast. doctest is fetched by FetchContent; the pinned v2.4.11 had
+    to be bumped to v2.5.3 because v2.4.11 declares cmake_minimum_required(VERSION 3.0) and CMake 4
+    removed compatibility with projects requiring < 3.5.
+  files:
+    - Lumina-BETA-RPI-2W/src/core/frame.hpp
+    - Lumina-BETA-RPI-2W/src/core/detection.hpp
+    - Lumina-BETA-RPI-2W/src/core/result.hpp
+    - Lumina-BETA-RPI-2W/src/core/time.hpp
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/core/bounded_queue.hpp
+    - Lumina-BETA-RPI-2W/src/core/logging.hpp
+    - Lumina-BETA-RPI-2W/src/core/logging.cpp
+    - Lumina-BETA-RPI-2W/src/capture/camera.hpp
+    - Lumina-BETA-RPI-2W/src/vision/detector.hpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/test_main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_bounded_queue.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/tests/mocks/mock_camera.hpp
+    - Lumina-BETA-RPI-2W/tests/mocks/mock_detector.hpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CMakePresets.json
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Verified by the user: host tests pass (10 doctest cases) and the aarch64 build is green. The
+    detector implementation lands in a later entry.
+
+# ---------------------------------------------------------------------------
+# CHG-0011 — libcamera OV5647 capture source + on-device probe
+# ---------------------------------------------------------------------------
+- id: CHG-0011
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-011, INV-021, INV-023, INV-031, INV-050, INV-070]
+  supersedes: null
+  summary: >-
+    Implemented LibcameraSource (ICamera over libcamera 0.7.2) with a manual mmap frame path, added
+    the headless lumina_capture_test probe and pkg-config-based CMake wiring, and fixed a shutdown
+    race that re-queued requests while the camera was Stopping.
+  rationale: >-
+    Day 0-1 requires a libcamera OV5647 capture path validated on real hardware. The API was
+    verified against the installed libcamera 0.7.2 headers and the upstream application-developer
+    guide (INV-001). MappedFrameBuffer is declared only in the internal, non-installed
+    libcamera/internal/mapped_framebuffer.h, so the source maps FrameBuffer planes itself with
+    mmap(). Completion callbacks run on libcamera's internal thread and copy the newest frame into
+    a single-slot hand-off (stale frames dropped, INV-031). The first hardware run exposed a
+    shutdown bug: the completion signal was detached AFTER Camera::stop(), so requests cancelled
+    during stop were re-queued ("Camera in Stopping state trying queueRequest()"); stop() now clears
+    the running flag and disconnects the signal before stopping the camera, and cancelled requests
+    are never re-queued.
+  files:
+    - Lumina-BETA-RPI-2W/src/capture/libcamera_source.hpp
+    - Lumina-BETA-RPI-2W/src/capture/libcamera_source.cpp
+    - Lumina-BETA-RPI-2W/src/tools/capture_probe.cpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CMakePresets.json
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Verified on the Pi: libcamera v0.7.2+rpt20260817, camera /base/soc/i2c0mux/i2c@1/ov5647@36,
+    pipeline rpi/vc4, 640x480-RGB888/sRGB, stride 1920, single plane (921600 B), 4 buffers; 30
+    frames in 1669.4 ms (~17.97 FPS capture-only, no inference). Next: NCNN cross-build + YOLO11n
+    export + on-device benchmark (Increment 3).
 ```
