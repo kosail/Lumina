@@ -6,6 +6,8 @@
 
 #include <piper.h> // libpiper C API (third_party/libpiper/include)
 
+#include <algorithm>
+#include <cstddef>
 #include <string>
 #include <utility>
 
@@ -13,6 +15,16 @@
 #include "core/time.hpp"
 
 namespace lumina::audio {
+
+namespace {
+
+// Playback write granularity. libpiper can return a whole utterance as one chunk
+// and exposes no cancellation, so the only place a live synthesis can be aborted
+// is during its playback write; we poll `stop` between these small sub-blocks
+// (~46 ms of audio at 22050 Hz) instead of blocking on one multi-second write.
+constexpr std::size_t kWriteFrames = 1024;
+
+} // namespace
 
 // Out-of-class definition of the private nested type declared as `class Impl;`
 // in the header (pimpl idiom). It owns the piper_synthesizer* handle and config.
@@ -114,14 +126,25 @@ core::Status PiperTts::synthesize(std::string_view text,
                          chunk.is_last);
 
         if (chunk.num_samples > 0) {
-            if (!sink.write(chunk.samples, chunk.num_samples, chunk.sample_rate)) {
-                return core::failure("audio sink write failed");
-            }
-            if (!firstAudioLogged) {
-                // Time until the first samples are handed to the device — this is
-                // the synthesis contribution to INV-051 (event->audible).
-                LUMINA_LOG_INFO("Piper: first audio after {:.0f} ms", core::msSince(startedAt));
-                firstAudioLogged = true;
+            // Write the chunk in small sub-blocks, polling `stop` between them.
+            std::size_t offset = 0;
+            while (offset < chunk.num_samples) {
+                if (stop.load(std::memory_order_relaxed)) {
+                    LUMINA_LOG_DEBUG("Piper: speech interrupted after {} samples", totalSamples);
+                    return {};
+                }
+                const std::size_t remaining = chunk.num_samples - offset;
+                const std::size_t writeCount = std::min(kWriteFrames, remaining);
+                if (!sink.write(chunk.samples + offset, writeCount, chunk.sample_rate)) {
+                    return core::failure("audio sink write failed");
+                }
+                if (!firstAudioLogged) {
+                    // Time until the first samples are handed to the device — this is
+                    // the synthesis contribution to INV-051 (event->audible).
+                    LUMINA_LOG_INFO("Piper: first audio after {:.0f} ms", core::msSince(startedAt));
+                    firstAudioLogged = true;
+                }
+                offset += writeCount;
             }
             totalSamples += chunk.num_samples;
         }

@@ -154,6 +154,18 @@ private:
     bool m_hasNewFrame = false;
 
     std::atomic<bool> m_running{false};
+
+    // Serializes the request-completion callback against stop(). libcamera invokes
+    // the callback from its own thread; without this, a callback that passed the
+    // `m_running` check could call queueRequest() after stop() began (libcamera logs
+    // "Camera in Stopping state trying queueRequest()") or touch m_camera/buffers
+    // after stop() reset them -> segfault. The callback holds this mutex for its
+    // whole body and stop() flips `m_stopping` under it, so no callback runs once
+    // teardown starts. We deliberately do NOT disconnect the signal: disconnecting
+    // mid-emission is itself unsafe.
+    std::mutex m_callbackMutex;
+    bool m_stopping = false;
+
     bool m_managerStarted = false;
     bool m_acquired = false;
     bool m_streaming = false;
@@ -163,6 +175,11 @@ bool LibcameraSource::Impl::start() {
     if (m_running.load()) {
         LUMINA_LOG_WARN("libcamera source already started");
         return true;
+    }
+    {
+        // Allow the completion callback again (idempotent start after a stop).
+        std::lock_guard<std::mutex> callbackLock(m_callbackMutex);
+        m_stopping = false;
     }
 
     LUMINA_LOG_INFO("libcamera {} ({}:{})", libcamera::CameraManager::version(),
@@ -384,7 +401,10 @@ core::PixelFormat LibcameraSource::Impl::mapFormat(const libcamera::PixelFormat&
 }
 
 void LibcameraSource::Impl::onRequestCompleted(libcamera::Request* request) {
-    if (request == nullptr || !m_running.load()) {
+    // Serialize against stop(): we must not touch the camera, buffers, or mappings
+    // after stop() has begun tearing them down.
+    std::lock_guard<std::mutex> callbackLock(m_callbackMutex);
+    if (request == nullptr || m_stopping || !m_running.load()) {
         return;  // shutting down: do not touch buffers or re-queue
     }
     if (request->status() == libcamera::Request::RequestCancelled) {
@@ -420,15 +440,14 @@ bool LibcameraSource::Impl::getLatest(core::Frame& out) {
 }
 
 void LibcameraSource::Impl::stop() {
-    // Flip the running flag and detach the completion signal FIRST. libcamera
-    // cancels the in-flight requests while transitioning to Stopping and would
-    // otherwise still call our slot, which must not re-queue a request then
-    // (libcamera logs "Camera in Stopping state trying queueRequest()"). Setting
-    // m_running also makes any callback already executing on libcamera's thread
-    // return immediately.
-    m_running.store(false);
-    if (m_camera) {
-        m_camera->requestCompleted.disconnect(this);
+    // Flip the flags under the callback lock and wait for any in-flight completion
+    // to finish, so nothing is queued during Stopping and no callback touches
+    // torn-down state. The lock is released BEFORE camera->stop() because that call
+    // may synchronously deliver cancellation callbacks (which take the same lock).
+    {
+        std::lock_guard<std::mutex> callbackLock(m_callbackMutex);
+        m_stopping = true;
+        m_running.store(false);
     }
     if (m_streaming && m_camera) {
         m_camera->stop();

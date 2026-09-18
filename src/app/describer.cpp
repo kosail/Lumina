@@ -77,6 +77,58 @@ std::vector<std::string> phraseCatalog(const core::Config& config, int maxPerCla
     return phrases;
 }
 
+std::vector<std::string> alertPhraseCatalog()
+{
+    // Both proximity wordings, so either can be spoken instantly (INV-051).
+    return {i18n::proximityAlertPhrase(true), i18n::proximityAlertPhrase(false)};
+}
+
+std::vector<std::string> twoClassPhraseCatalog(const core::Config& config, int maxPerClass)
+{
+    std::vector<std::string> phrases;
+    if (maxPerClass < 1) {
+        return phrases;
+    }
+
+    // Collect the narrated classes in enum order. describeDetections breaks count
+    // ties by enum order, so pairing in this order makes a warmed phrase an exact
+    // match for the runtime sentence.
+    std::vector<i18n::ObjectClass> classes;
+    classes.reserve(config.classIds.size());
+    for (const int cocoId : config.classIds) {
+        const i18n::ObjectClass objectClass = i18n::fromCocoId(cocoId);
+        if (objectClass != i18n::ObjectClass::Unknown) {
+            classes.push_back(objectClass);
+        }
+    }
+    std::sort(classes.begin(), classes.end(), [](i18n::ObjectClass lhs, i18n::ObjectClass rhs) {
+        return static_cast<int>(lhs) < static_cast<int>(rhs);
+    });
+
+    for (std::size_t i = 0; i < classes.size(); ++i) {
+        for (std::size_t j = i + 1; j < classes.size(); ++j) {
+            for (int countA = 1; countA <= maxPerClass; ++countA) {
+                const std::string itemA = formatCount(classes[i], countA);
+                if (itemA.empty()) {
+                    continue;
+                }
+                for (int countB = 1; countB <= maxPerClass; ++countB) {
+                    const std::string itemB = formatCount(classes[j], countB);
+                    if (itemB.empty()) {
+                        continue;
+                    }
+                    // Match describeDetections: most frequent class first, ties by
+                    // enum order (classes[i] precedes classes[j]).
+                    const std::string joined =
+                        countA >= countB ? itemA + " y " + itemB : itemB + " y " + itemA;
+                    phrases.push_back(joined + " enfrente.");
+                }
+            }
+        }
+    }
+    return phrases;
+}
+
 std::string describeDetections(const std::vector<core::Detection>& detections,
                                const core::Config& config,
                                std::size_t maxItems)

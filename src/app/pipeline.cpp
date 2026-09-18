@@ -6,13 +6,15 @@
 
 #include <chrono>
 #include <cstdio>
-#include <string>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include <unistd.h> // sysconf(_SC_PAGESIZE) for the RSS line
 
-#include "app/describer.hpp"
+#include "app/scene.hpp"
 #include "core/logging.hpp"
+#include "core/time.hpp"
 
 namespace lumina::app {
 
@@ -53,9 +55,8 @@ Pipeline::Pipeline(capture::ICamera* camera,
     , m_tts(tts)
     , m_sink(sink)
     , m_config(std::move(config))
-    , m_pipelineConfig(pipelineConfig)
     , m_frames(pipelineConfig.frameQueueCapacity)
-    , m_speech(pipelineConfig.speechQueueCapacity)
+    , m_arbiter(pipelineConfig.arbiter)
 {
 }
 
@@ -95,13 +96,13 @@ void Pipeline::stop() noexcept
         return; // never started, or already stopped
     }
 
-    // Abort any in-progress utterance, then unblock the loops by closing the queues.
-    m_stopSpeech.store(true, std::memory_order_relaxed);
+    // Ask the loops to stop, then wake them. Closing the arbiter also raises its
+    // interrupt flag, so an in-progress utterance aborts promptly.
     m_captureThread.request_stop();
     m_inferenceThread.request_stop();
     m_speechThread.request_stop();
+    m_arbiter.close();
     m_frames.close();
-    m_speech.close();
 
     if (m_captureThread.joinable()) {
         m_captureThread.join();
@@ -149,37 +150,23 @@ void Pipeline::inferenceLoop(std::stop_token stopToken)
         ++framesProcessed;
 
         const std::vector<core::Detection> detections = m_detector->detect(frame);
-        const std::string text = describeDetections(detections, m_config);
-
-        if (text.empty()) {
-            // Nothing to narrate: reset hysteresis so it restarts cleanly.
-            m_candidateText.clear();
-            m_candidateCount = 0;
+        const std::optional<alerts::Alert> alert =
+            buildSceneAlert(detections, m_config, frame.width, frame.height, frame.capturedAt);
+        if (alert) {
+            // Logged for every candidate (accepted or not) so detection latency can
+            // be read off the DEBUG stream (INV-051 / docs/PERFORMANCE.md).
+            LUMINA_LOG_DEBUG("detection {:.1f} ms after capture -> '{}'",
+                             core::msSince(frame.capturedAt),
+                             alert->text);
+            if (!m_arbiter.submit(*alert, core::now())) {
+                // Suppressed by stability/cooldown/gap or a full queue: expected.
+                LUMINA_LOG_TRACE("alert suppressed: '{}'", alert->text);
+            }
         } else {
-            // Hysteresis: require the same phrase for `speechStableFrames` frames
-            // so a single flickering detection does not start speech.
-            if (text == m_candidateText) {
-                ++m_candidateCount;
-            } else {
-                m_candidateText = text;
-                m_candidateCount = 1;
-            }
-
-            if (m_candidateCount >= m_pipelineConfig.speechStableFrames) {
-                const core::TimePoint now = core::now();
-                const bool repeatTooSoon =
-                    text == m_lastText &&
-                    (now - m_lastSpokenAt) < m_pipelineConfig.speechCooldown;
-                if (!repeatTooSoon) {
-                    m_lastText = text;
-                    m_lastSpokenAt = now;
-                    // Carry the capture time so speechLoop can measure event->audible.
-                    m_speech.push(SpeechRequest{text, frame.capturedAt});
-                    LUMINA_LOG_DEBUG("detection {:.1f} ms after capture -> '{}'",
-                                     core::msSince(frame.capturedAt),
-                                     text);
-                }
-            }
+            // Nothing to say this frame: break the stability run so a scene that
+            // disappeared and came back must be re-observed (matches the old
+            // hysteresis reset).
+            m_arbiter.clearCandidate();
         }
 
         // Periodic throughput/memory line for the Day-2 gate (INV-051/INV-052).
@@ -197,28 +184,32 @@ void Pipeline::inferenceLoop(std::stop_token stopToken)
 
 void Pipeline::speechLoop(std::stop_token stopToken)
 {
-    SpeechRequest request;
-    while (!stopToken.stop_requested()) {
-        if (!m_speech.waitPop(request)) {
-            break; // queue closed during shutdown
-        }
-        m_stopSpeech.store(false, std::memory_order_relaxed);
+    alerts::Alert request;
+    while (!stopToken.stop_requested() && m_arbiter.waitPop(request)) {
         LUMINA_LOG_INFO("speech: '{}' (event->speech-start {:.0f} ms)",
                         request.text,
                         core::msSince(request.detectedAt));
 
-        const core::Status status = m_tts->synthesize(request.text, *m_sink, m_stopSpeech);
+        // The arbiter's interrupt flag becomes true if a higher-priority alert
+        // arrives while this utterance is being synthesized (INV-032).
+        const core::Status status = m_tts->synthesize(request.text, *m_sink, m_arbiter.interruptFlag());
         if (!status) {
             LUMINA_LOG_WARN("speech failed: {}", status.error());
+            m_arbiter.finishSpeaking(core::now());
             continue;
         }
 
-        // Let the sentence play out before taking the next one. Skip on shutdown,
-        // where m_stopSpeech is set and the utterance was aborted.
-        if (!m_stopSpeech.load(std::memory_order_relaxed)) {
+        // Let the sentence play out before taking the next one, unless it was cut
+        // short by a preemption. On preemption, drop the already-buffered audio so
+        // the higher-priority alert starts immediately (AlsaSink re-prepares on the
+        // next write).
+        if (m_arbiter.interruptFlag().load(std::memory_order_relaxed)) {
+            m_sink->stop();
+        } else {
             m_sink->drain();
             LUMINA_LOG_INFO("spoken: event->end {:.0f} ms", core::msSince(request.detectedAt));
         }
+        m_arbiter.finishSpeaking(core::now());
     }
 }
 

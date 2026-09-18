@@ -30,6 +30,20 @@ namespace lumina::app {
 [[nodiscard]] std::vector<std::string> phraseCatalog(const core::Config& config,
                                                      int maxPerClass = 3);
 
+// Two-class phrases (the `maxItems = 2` descriptions) to pre-render, so common
+// combinations are cache hits instead of multi-second live syntheses. For every
+// unordered pair of narrated classes it emits the phrases where each class has a
+// count in 1..`maxPerClass`. The order inside the phrase matches
+// describeDetections (higher count first, ties by catalog order) so a warmed
+// phrase is an exact cache-key match.
+[[nodiscard]] std::vector<std::string> twoClassPhraseCatalog(const core::Config& config,
+                                                             int maxPerClass = 2);
+
+// The fixed proximity/obstacle alert phrases (FR-02) to pre-render, so a safety
+// warning is never a slow lazy cache miss (INV-051). Kept next to phraseCatalog
+// so main() warms both in one pass.
+[[nodiscard]] std::vector<std::string> alertPhraseCatalog();
+
 // Build a short Spanish description of `detections`, or "" when nothing worth
 // narrating was found.
 //

@@ -66,6 +66,10 @@ below `0.80`, stop and ask the user. See `INVARIANTS.md` → INV-001.
 - **TTS:** libpiper (C API) + espeak-ng, Spanish (es_MX) voice.
 - **Audio out:** ALSA PCM routed to `bluealsa` → Bluetooth A2DP earbuds.
 - **Bluetooth:** BlueZ (single trusted device).
+- **Proximity:** 1× **front** VL53L0X time-of-flight on **I²C1** (`0x29`, `XSHUT` on GPIO17), read
+  via the kernel `i2c-dev` interface (no extra library); seen through `IProximitySensor` (INV-013,
+  INV-033, INV-075). A second unit is a spare; the rear sensor is deferred.
+  Setup/wiring: `docs/PROXIMITY.md`.
 - **Target OS:** Raspberry Pi OS **Lite 64-bit, Debian 13 "trixie"** (glibc, aarch64; kernel
   6.18.x+rpt-rpi-v8), headless (INV-021, INV-024). DietPi 64-bit is the only permitted alternative
   and only as a **post-gate optimization**; Alpine/musl is rejected for the beta.
@@ -101,7 +105,7 @@ Lumina-BETA-RPI-2W/
     capture/                 # camera (libcamera), ICamera
     vision/                  # detector (NCNN YOLO), face, face_store
     processing/              # distance heuristic
-    sensors/                 # proximity.hpp (IProximitySensor + Null), future vl53l0x
+    sensors/                 # proximity.hpp (IProximitySensor + Null), vl53l0x_proximity (Phase C)
     alerts/                  # arbiter (priority, cooldown, preemption)
     audio/                   # piper_tts (ITtsEngine), bluealsa_sink (IAudioSink)
     app/                     # pipeline orchestrator + Spanish describer
@@ -323,8 +327,14 @@ scripts/5-build_libpiper.sh
 # One-time: download the pinned es_MX voice -> models/voices (sha256-verified)
 scripts/6-fetch_voices.sh
 
+# On-device: enable I2C and print the proximity wiring/address plan (Phase B)
+scripts/7-setup_i2c.sh          # prints pin map; see docs/PROXIMITY.md for the guided walkthrough
+
 # On-device benchmarks (need LUMINA_ENABLE_NCNN=ON + LUMINA_BUILD_BENCH=ON)
 build/aarch64/tests/lumina_bench_fps <modelDir> <inputWidth> <inputHeight> [iterations] [--threads N]
+
+# On-device alert-latency benchmark (needs LUMINA_ENABLE_AUDIO=ON + LUMINA_BUILD_BENCH=ON)
+build/aarch64/tests/lumina_bench_latency <voicePath> <espeak-ng-data-dir> [iterations]
 ```
 
 ---

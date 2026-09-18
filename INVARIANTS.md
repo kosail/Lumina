@@ -151,19 +151,27 @@ benchmark-gated and may be revisited after the Day-2 gate if memory/size pressur
 
 ---
 
-### INV-013 — No proximity sensor is present  `SCOPE`
+### INV-013 — One VL53L0X proximity sensor is present (front)  `SCOPE`
 
-**Statement.** The current hardware bundle contains **no distance/proximity sensor** (the IR
-module is an illuminator + IR-CUT filter). Proximity is therefore **disabled by default** but
-**must remain modular** behind `IProximitySensor` (`NullProximitySensor` today), so a future
-VL53L0X / E18 / TCRT5000 can be added without architectural change.
+**Statement.** The hardware bundle includes **one VL53L0X time-of-flight proximity sensor**,
+mounted facing **forward** and connected over **I²C1** at its default address `0x29`. A **second
+VL53L0X is held as a spare** for a future **rear** sensor; that rear sensor is **fully deferred**
+until every pending task, nice-to-have, and telemetry option is done. Proximity **remains
+modular** behind `IProximitySensor` (with `NullProximitySensor` as the no-hardware fallback). The
+chip is **confirmed VL53L0X on-device** (I²C model ID register `0xC0` → `0xEE`, verified
+2026-09-18); the breakout silkscreen reads "VL53L0/1XV2" but the part is VL53L0X (INV-001).
 
-**Rationale.** Keeps the door open for the intended work-reduction/safety feature without
-blocking the beta. See `RAW_PLAN.md` §5.
+**Rationale.** The IR module above the camera is only an illuminator + IR-CUT filter and cannot
+measure distance; even a single front ToF sensor closes the "curbs/steps/poles are not COCO
+classes" gap identified in `docs/PERFORMANCE.md` §5 and enables a low-latency, vision-independent
+safety alert. The rear sensor is deferred to protect the schedule. See `RAW_PLAN.md` §5 and
+`docs/PROXIMITY.md`.
 
-**Source.** User confirmation (2026-09-15); `RAW_PLAN.md` INV11.
+**Source.** User confirmation (2026-09-18): two VL53L0X (8-pin) acquired, all confirmed VL53L0X
+by model ID; user then reduced scope to **front only** and deferred the rear to the very end.
 
-**Changeability.** Flip `LUMINA_ENABLE_PROXIMITY` when hardware is acquired.
+**Changeability.** Hardware scope; by user approval. Implementation is toggled by
+`LUMINA_ENABLE_PROXIMITY` (see INV-033); the pin/address contract is INV-075.
 
 ---
 
@@ -232,6 +240,7 @@ Debug rendering, if any, is behind a compile-time flag and must not run in the s
 **Statement.** The runtime uses only: **NCNN** (inference), **libcamera** (capture), **OpenCV**
 (`objdetect`: YuNet + SFace; image ops), **libpiper + espeak-ng** (TTS), **ALSA → bluealsa**
 (audio), **BlueZ** (Bluetooth). Adding any **new runtime dependency** requires explicit approval.
+Proximity reads the kernel **`i2c-dev`** interface directly, which is not a new library (INV-033).
 
 **Rationale.** Each new dependency costs build time, RAM, and licensing review on a 6-day budget.
 
@@ -290,6 +299,7 @@ ground truth when making build/performance decisions:
 | CPU | reported **Broadcom BCM2837**, **4 cores @ 1.00 GHz** (Arm **Cortex-A53**, ARMv8.0-A) |
 | GPU | **Broadcom bcm2835-vc4** (VideoCore IV; no general-purpose GPU compute) |
 | RAM | 512 MB (vendor spec sheet) |
+| Proximity | **1× VL53L0X** ToF on I²C1 (front, `0x29`); model ID `0xEE` **confirmed**; second unit spare (rear deferred) — INV-013, INV-075 |
 | Host cross-compiler | `aarch64-linux-gnu-g++` **GCC 14.2.1 20250405** (Arch package; built-in sysroot `/usr/aarch64-linux-gnu`, `lib64` layout) |
 | Host gotcha | The Arch cross toolchain **ignores `--sysroot` for library search**; the toolchain file must pass explicit `-L`/`-Wl,--sysroot`/`-rpath-link` (see `CHG-0008`, `docs/CROSS_COMPILE.md`) |
 | Sysroot provenance | rsync `pi:/usr` -> `cmake/rpi-sysroot/usr`, plus merged-`/usr` symlinks; built/refreshed by `scripts/1-sync_sysroot.sh` (gitignored, ~1.4 GB) |
@@ -352,17 +362,26 @@ Fixes the nightly's unbounded-queue / non-interruptible-TTS defect.
 
 ---
 
-### INV-033 — Proximity is a modular, disabled extension  `HARD`
+### INV-033 — Proximity is modular and enabled on target  `HARD`
 
-**Statement.** `IProximitySensor` + `NullProximitySensor` + a factory are part of the code, but
-the feature is compiled out by default (`LUMINA_ENABLE_PROXIMITY=OFF`). With the null sensor the
-runtime behaves exactly as the no-proximity beta.
+**Statement.** Proximity is delivered through `IProximitySensor` (+ `NullProximitySensor` and a
+factory) with a **VL53L0X implementation**, behind `LUMINA_ENABLE_PROXIMITY` (**ON** for the
+aarch64 preset, **OFF** for the host test build). With the null sensor the runtime behaves exactly
+as the no-proximity beta. The driver uses the Linux **`i2c-dev`** interface directly — **no
+third-party library** (INV-022) — and reads the single **front** sensor at its default address
+`0x29`; `XSHUT` (GPIO17) is used only to reset it. The pin contract is INV-075. The rear sensor
+and any front/rear distinction are **deferred** (INV-013).
 
-**Rationale.** Forward compatibility without scope creep (see INV-013).
+**Rationale.** Forward compatibility (INV-013) with a real safety feature, without adding a
+dependency or scope creep. See `RAW_PLAN.md` §5 and `docs/PROXIMITY.md`.
 
-**Source.** User instruction (2026-09-15); `RAW_PLAN.md` §5.
+**Source.** User instruction (2026-09-18); `RAW_PLAN.md` §5.
 
-**Changeability.** Toggle the CMake option.
+**Changeability.** Toggle the CMake option; by user approval.
+
+**Implementation status.** Planned (Phase C, after Day 4) — tracked in `CHANGELOG.md`. The
+`src/sensors/` scaffolding mentioned by earlier revisions did not exist in code as of
+2026-09-18; it is created in that phase.
 
 ---
 
@@ -380,13 +399,46 @@ audio. It is implemented only after all core features pass (Day 6).
 
 ---
 
+### INV-075 — Front proximity I²C/GPIO contract  `HARD`
+
+**Statement.** The single **front** VL53L0X uses **I²C1** at its default address `0x29` and is
+**polled** (not interrupt-driven). The fixed map is:
+
+| Signal | Front sensor | Raspberry Pi Zero 2 W |
+|--------|--------------|------------------------|
+| SDA | SDA | GPIO2 = physical pin 3 |
+| SCL | SCL | GPIO3 = physical pin 5 |
+| XSHUT | XSHUT | GPIO17 = physical pin 11 (reset line) |
+| VIN | VIN | 3.3 V = pin 1 (verify board rating) |
+| GND | GND | pin 6 |
+| GPIO1 | unused | (optional interrupt, later) |
+| I²C address | `0x29` (default) | — |
+
+`XSHUT` is **active-low** reset; the driver may pulse it to recover a hung sensor. No address
+reassignment is needed for one sensor. A future **rear** sensor has a reserved entry (`XSHUT`
+GPIO27 = pin 13, address `0x30` after an `XSHUT`-sequenced reassignment) but is deferred
+(INV-013) and not wired now. The camera (CSI ribbon) does not use these pins.
+
+**Rationale.** Removes wiring guesswork for the one sensor deployed now; the rear reservation
+avoids re-deriving the dual-sensor scheme later. See `docs/PROXIMITY.md`.
+
+**Source.** User decision (2026-09-18); VL53L0X datasheet (ST) and Raspberry Pi GPIO pinout
+(docs consulted per INV-001).
+
+**Changeability.** By user approval; changing it updates `docs/PROXIMITY.md` and `CHANGELOG.md`.
+
+---
+
 ## 5. FEATURE SCOPE invariants
 
 ### INV-040 — Beta features are fixed  `SCOPE`
 
 **Statement.** The beta delivers: (1) object/animal/person detection narrated in Spanish;
-(2) prioritized obstacle alerts; (3) **face recognition of 3–4 enrolled people**. Nothing else is
-in scope for Day 6.
+(2) prioritized obstacle alerts; (3) **face recognition of 3–4 enrolled people**. A fourth feature
+— **(4) a front VL53L0X proximity alert** (INV-013, INV-033, INV-075) — is in scope but strictly
+**after** the core three and only if time remains (planned after Day 4). A **rear** proximity
+sensor (and any front/rear distinction) is **out of scope** and deferred until after every pending
+task, nice-to-have, and the telemetry option. Nothing else is in scope for Day 6.
 
 **Rationale.** 6-day deadline with a mandatory GO/NO-GO gate; scope control is survival.
 
@@ -566,7 +618,7 @@ where they differ from Java.
 | INV-010  | HARD     | Target hardware is the RPi Zero 2 W |
 | INV-011  | HARD     | Camera is OV5647 5 MP, 135°, IR-CUT |
 | INV-012  | HARD     | Cortex-A53 has no INT8 dot-product |
-| INV-013  | SCOPE    | No proximity sensor present (modular hook) |
+| INV-013  | SCOPE    | One VL53L0X proximity sensor present (front; rear deferred) |
 | INV-014  | HARD     | Exactly one Bluetooth audio device |
 | INV-015  | HARD     | Thermal headroom is not a concern |
 | INV-020  | HARD     | Language is C++23 |
@@ -578,7 +630,7 @@ where they differ from Java.
 | INV-030  | HARD     | Interface-first and dependency injection |
 | INV-031  | HARD     | Bounded queues; never block capture |
 | INV-032  | HARD     | Safety alerts preempt descriptions |
-| INV-033  | HARD     | Proximity is modular and disabled |
+| INV-033  | HARD     | Proximity is modular and enabled on target |
 | INV-034  | HARD     | Telemetry deferred, optional, off core path |
 | INV-040  | SCOPE    | Beta features are fixed |
 | INV-041  | SCOPE    | Face recognition, NOT currency; no navigation |
@@ -591,3 +643,4 @@ where they differ from Java.
 | INV-070  | PROCESS  | Every meaningful change is logged |
 | INV-071  | PROCESS  | 6-day deadline and Day-2 gate |
 | INV-072  | PROCESS  | Modular, testable, decoupled, commented |
+| INV-075  | HARD     | Front proximity I²C/GPIO contract |

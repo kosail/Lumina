@@ -25,7 +25,9 @@ struct PhraseCacheConfig {
     // persistent default ($HOME/.cache/lumina/phrase-cache); this relative value
     // is only a fallback. Override with LUMINA_PHRASE_CACHE_DIR.
     std::string directory = "phrase-cache";
-    std::size_t chunkFrames = 4096; // samples streamed per file read
+    // Samples streamed per file read. Kept small (~47 ms at 22050 Hz) so a
+    // preempting alert can cut a cached utterance quickly (INV-032/INV-051).
+    std::size_t chunkFrames = 1024;
     // Identifies the voice/engine the cache was rendered with (e.g. the voice
     // path). Mixed into the file key so a cache produced by a different voice is
     // never replayed after the voice changes.

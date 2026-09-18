@@ -109,8 +109,8 @@ order is unchanged (§8).
 
 The safety-critical objects (in-path obstacles) are large and near, so 320×240 is
 adequate; note also that the most dangerous hazards (curbs, steps, poles) are not
-COCO classes at any resolution — that gap requires a proximity sensor, which the
-current hardware lacks (INV‑013).
+COCO classes at any resolution — that gap is addressed by the front VL53L0X proximity
+sensor now on the hardware (INV‑013/INV‑075; see `docs/PROXIMITY.md`).
 
 ---
 
@@ -196,17 +196,32 @@ printed per-layer timings. Keep that instrumented binary off the demo path.
 ## 10. End-to-end pipeline (Day‑2 gate, CHG‑0035)
 
 Measured on the Pi Zero 2 W with the full runtime (libcamera capture + YOLO11n/NCNN +
-Piper/espeak‑ng + ALSA→bluealsa), voice `es_MX-ald-x_low`, 320×256 inference, 4 NCNN
-threads, `PIPER_NUM_THREADS=3`:
+Piper/espeak‑ng + ALSA→bluealsa), 320×256 inference, 4 NCNN threads, `PIPER_NUM_THREADS=3`.
+The gate run used `es_MX-ald-x_low`; the shipping default is `es_MX-claude-high`
+(INV‑042 / CHG‑0037), whose re-measurement follows.
 
 ```bash
 LD_LIBRARY_PATH=$PWD/third_party/libpiper/lib LUMINA_LOG_LEVEL=debug ./lumina \
   models/yolo11n_ncnn_320x256 models/voices/es_MX-ald-x_low.onnx espeak-ng-data
 ```
 
-> **Voice note (CHG‑0037):** the gate run above used `es_MX-ald-x_low`; the shipping
-> default is now **`es_MX-claude-high`** (better quality). These numbers have not yet
-> been re-measured with the new voice — synthesis time and RSS will differ somewhat.
+### Shipping voice comparison (same 320×256 / 4-thread config)
+
+| Metric | `es_MX-ald-x_low` (gate) | **`es_MX-claude-high`** (shipping) |
+|---|---|---|
+| RSS (idle) | 157 MB | **187 MB** (model 63 MB vs 21 MB) |
+| Detection throughput | 4.0–4.3 FPS | **4.2–4.3 FPS** |
+| Alert latency, cached phrase | `event→speech-start` 247–271 ms | **252–298 ms** |
+| `event→end` | ≈ 2.3 s | **≈ 2.16–2.20 s** |
+| Phrase cache warm | 36 phrases ≈ 60 s (first run) | **0 new** (already warmed; persisted) |
+| Synthesis/warm time | ≈ 1.1–1.6 s per phrase (from warm) | not captured (cache already warm) |
+
+> *Warm-count note:* the "36 phrases" above are historical (12 narrated classes × 3). After
+> CHG‑0047 the narrated set is 10 classes; after CHG‑0055 a fresh cache warms **212 phrases**
+> (30 single‑class + 180 two‑class + 2 alerts). The first run renders them (minutes, one‑time) and
+> later runs are cache hits.
+
+### Gate run detail (`es_MX-ald-x_low`)
 
 | Metric | Measured | Notes |
 |---|---|---|
@@ -229,7 +244,65 @@ inference benchmark still measures 5.27 FPS). This gap is **temporarily accepted
 in order: **decimation** (infer every N frames) → **256×256** → NanoDet‑Plus.
 
 ### Known limitations
-- YOLO11n at 320×256 confuses some classes (e.g. a person reported as a motorcycle). Acceptable
-  for the beta and out of scope for this stage; recall validation is §7.
-- While an object stays in view, the same phrase can repeat every ~2 s. The Day‑3 alert arbiter
-  (priority/cooldown/dedup, INV‑032/FR‑07) will own this.
+- YOLO11n at 320×256 can confuse similar classes (e.g. a person reported as a motorcycle). The
+  model's behaviour is out of scope for this stage; recall validation is §7. (Motorcycle and truck
+  are no longer narrated in the beta, so that particular confusion no longer reaches the user.)
+- Repetition is governed by the Day‑3 alert arbiter (`src/alerts/arbiter.*`): an unchanged scene is
+  not repeated more than once per 4 s per phrase; a changed scene can speak again immediately; a
+  Near in‑path obstacle preempts narration (a Mid one does not).
+
+> **WARNING — live synthesis is not interruptible (later stage).** libpiper (pinned `251fdb9d`)
+> exposes **no cancellation** (`piper.h` has no stop/cancel call), and `piper_synthesize_next` can
+> return an entire utterance as a single chunk. A live (uncached) synthesis therefore **cannot be
+> preempted by any priority**, including the planned IR/Safety alert; preemption is guaranteed only
+> for **cached** playback (between ~47 ms chunks) and tail‑write aborts. Mitigations now: pre‑warmed
+> single‑ and two‑class descriptions, descriptions capped at 2 items, and smaller cache/write
+> chunks. Consequences: **Mid stays non‑preempting**, and **IR/proximity preemption of a live
+> synthesis is not guaranteed**. Revisit at a later stage — options: render descriptions off the
+> speech thread so the speech path is cache‑only; vendor cancellation into libpiper; or add an
+> IR‑only immediate tone that bypasses TTS. (The IR sensor, when implemented in Phase C, is
+> `Priority::Safety`, the highest.)
+
+---
+
+## 11. Day‑3 alert behavior (arbiter)
+
+The alert pipeline is now: inference → `app::buildSceneAlert` → `AlertArbiter` → `CachingTts` →
+`AlsaSink`. Policy: priority ordering, 2‑frame stability for descriptions (1 for warnings), 4 s
+per‑phrase cooldown, 600 ms global gap (bypassed by warnings), strictly‑higher preemption.
+
+**Latency benchmark** (`tests/bench_latency.cpp`, on the Pi; needs `LUMINA_ENABLE_AUDIO=ON` +
+`LUMINA_BUILD_BENCH=ON`) measures `event → first audio` for a cached alert phrase:
+
+```bash
+LD_LIBRARY_PATH=$PWD/third_party/libpiper/lib \
+  ./build/aarch64/tests/lumina_bench_latency \
+  models/voices/es_MX-claude-high.onnx third_party/libpiper/share/espeak-ng-data 10
+```
+
+It exercises the real `CachingTts` + `AlsaSink` (falls back to a discard sink if bluealsa is not
+open). It excludes inference and the Bluetooth radio hop (~150–300 ms), and aborts each utterance
+after the first chunk so it stays fast.
+
+**Results (on‑device, 2026‑09‑18):**
+
+| Metric | Value | Notes |
+|---|---|---|
+| cached alert `event→first audio` | **claude: 0.13–0.16 ms; ald‑xlow: 0.13–0.19 ms** | `lumina_bench_latency`, 10 iterations, bluealsa |
+| cached alert `event→speech-start` | **251–311 ms** steady (433 ms cold) | pipeline log; +~150–300 ms BT ⇒ < 600 ms |
+| preempted alert `event→speech-start` | **311 ms** | was 738 ms before CHG‑0054; measured after the abort fixes |
+| live multi‑class synthesis | **6667–9217 ms** (claude) to first audio | lazy cache miss; eliminated on the warmed path by CHG‑0055 |
+| FPS / RSS | **4.1–4.3** / **189 MB (claude), 148 MB (ald‑xlow)** | well under INV‑052 |
+| static‑scene repeat | warnings ~9–24 s apart | no ~2 s churn |
+| Mid alert | `obstáculo cerca.` detected **and spoken** | non‑preempting; may queue behind live synthesis |
+
+**Crash found and fixed (CHG‑0056):** the first post‑change run segfaulted on Ctrl‑C with
+libcamera's "Camera in Stopping state trying queueRequest()". Root cause was a teardown race between
+`onRequestCompleted()` (libcamera thread) and `stop()`; it is now serialized (see the file header in
+`src/capture/libcamera_source.cpp`). **Verified on‑device (CHG‑0058):** 11 clean start/Ctrl‑C cycles
+including a ~4.5‑minute soak, no libcamera error, no segfault.
+
+**Voices:** cached playback is equally fast for both (`0.13–0.19 ms`). Live synthesis is ~**3.4×**
+faster with `ald‑xlow` (~25.6k samples/s) than `claude‑high` (~7.5k samples/s), at ~40 MB less RSS.
+A two‑voice "claude for warmed phrases, ald for misses" fallback was measured as viable but is
+**deferred** (CHG‑0057) until the later‑stage live‑synthesis work.

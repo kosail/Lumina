@@ -46,7 +46,8 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
   1. A near, path-centered obstacle produces a spoken alert within the latency target (INV-051).
   2. Repeated frames do not spam: a per-alert cooldown is enforced.
   3. A safety alert preempts a longer descriptive utterance in progress.
-  4. Distance is derived from the bbox heuristic (and fused with proximity if/when available).
+  4. Distance is fused from the true front VL53L0X proximity reading (INV-013) and the
+     bbox-size heuristic, with proximity taking precedence at short range.
 
 ### FR-03 — Face recognition of 3–4 enrolled people
 - **Priority:** MUST · **Status:** Approved · **Trace:** INV-040, INV-041
@@ -115,14 +116,21 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
   3. Zero new runtime dependencies beyond the OS socket API.
   4. Enabling it does not measurably change FPS or alert latency.
 
-### FR-10 — Modular proximity sensor hook (disabled)
-- **Priority:** WON'T (this beta, scaffolding only) · **Status:** Approved · **Trace:** INV-013, INV-033
-- **Description:** Provide `IProximitySensor` + `NullProximitySensor` + factory so a future
-  VL53L0X/E18/TCRT5000 can be integrated without architectural change.
+### FR-10 — Front proximity obstacle alert (rear deferred)
+- **Priority:** SHOULD (after the core three; Phase C, planned post-Day-4) · **Status:** Approved ·
+  **Trace:** INV-013, INV-033, INV-075
+- **Description:** Read the single **front** VL53L0X time-of-flight sensor over I²C1 and speak a
+  short Spanish alert when an obstacle is closer than a configured threshold. Routed through the
+  alert arbiter (priority/cooldown/preemption, FR-02/FR-07). A **rear** sensor and any front/rear
+  distinction are **deferred** to the very end of the project (INV-013/INV-040).
 - **Acceptance criteria:**
-  1. The code compiles and runs with the null sensor and behaves exactly as the no-sensor beta.
-  2. Enabling `LUMINA_ENABLE_PROXIMITY=ON` builds the (future) implementation path.
-  3. No proximity assumption leaks into other modules.
+  1. With `LUMINA_ENABLE_PROXIMITY=OFF` or no hardware, behavior is identical to the current beta
+     (`NullProximitySensor`).
+  2. The front sensor is read at `0x29` (INV-075) and reports plausible distances (roughly
+     30–2000 mm); `XSHUT` (GPIO17) can reset a hung sensor.
+  3. A front obstacle within threshold speaks a short Spanish proximity phrase.
+  4. Proximity alerts are not spammed (cooldown) and can preempt a description (INV-032).
+  5. No proximity assumption leaks into modules that should not depend on it (interface-only).
 
 ---
 
@@ -178,7 +186,7 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
 | CON-03 | No cloud, no network dependency in the core path. | INV-003 |
 | CON-04 | Exactly one Bluetooth output device (bone-conduction earbuds). | INV-014 |
 | CON-05 | Camera is the OV5647 135° IR-CUT module via libcamera. | INV-011 |
-| CON-06 | No proximity sensor currently available. | INV-013 |
+| CON-06 | One front VL53L0X ToF on I²C1 (model ID `0xEE` confirmed); `XSHUT` on GPIO17; rear sensor deferred. | INV-013, INV-075 |
 | CON-07 | Piper/espeak-ng are GPL-3.0 (accepted for beta). | INV-060 |
 
 ---
@@ -195,6 +203,7 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
 | OOS-06 | Multi-device Bluetooth management | Single sink only. | INV-014 |
 | OOS-07 | Subscription/B2B/B2G backend | Business layer, not the runtime beta. | — |
 | OOS-08 | Mobile app and laptop relay server | Vibe-coded separately; only the UDP hook is in scope (FR-09). | INV-034 |
+| OOS-09 | Motorcycle and truck narration | Removed from the beta class set and deferred as a nice-to-have; re-enabling is config-only (FR-08). | INV-040, INV-041 |
 
 ---
 
@@ -231,9 +240,9 @@ confirms no network dependency.
 | FR-07 | INV-032 |
 | FR-08 | INV-040, INV-042 |
 | FR-09 | INV-034, INV-003 |
-| FR-10 | INV-013, INV-033 |
+| FR-10 | INV-013, INV-033, INV-075 |
 | NFR-01..05 | INV-050..053, INV-031, INV-032 |
 | NFR-06 | INV-003, INV-034 |
 | NFR-07 | INV-030, INV-072 |
 | NFR-08 | INV-020..023 |
-| CON-01..07 | INV-071, INV-010, INV-003, INV-014, INV-011, INV-013, INV-060 |
+| CON-01..07 | INV-071, INV-010, INV-003, INV-014, INV-011, INV-013/INV-075, INV-060 |

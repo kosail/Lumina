@@ -29,8 +29,9 @@ derived_from:
 - INV8 no offline navigation: excluded.
 - INV9 telemetry deferred to Day 6; UDP fire-and-forget; must not touch core path.
 - INV10 runtime chosen by performance + ease: NCNN for inference; libpiper for TTS.
-- INV11 IR proximity: NOT present in purchased hardware. Dropped now, but implemented
-         MODULARLY behind IProximitySensor so a VL53L0X (or E18/TCRT5000) can be added later.
+- INV11 IR proximity: ACQUIRED (2x VL53L0X; 1 front deployed, 1 spare). Delivered MODULARLY
+         behind IProximitySensor with a Null fallback; implemented in Phase C after Day 4.
+         Rear sensor deferred to the very end (INV-013/INV-033/INV-075).
 - INV12 keep PiperTTS; Spanish only (reuse existing es_MX voice family).
 
 ---
@@ -43,7 +44,7 @@ derived_from:
 | Inference    | NCNN + YOLO11n (exported)                     | Pure C++, zero deps, best ARM; Ultralytics-recommended |
 | Face detect  | OpenCV FaceDetectorYN (YuNet)                | Turnkey C++ API in objdetect |
 | Face embed   | OpenCV FaceRecognizerSF (SFace) DEFAULT; MobileFaceNet(NCNN) option | SFace turnkey; MobileFaceNet saves RAM |
-| Distance     | bbox relative-size heuristic (from nightly)   | Cheap; fused with optional proximity later |
+| Distance     | bbox heuristic + VL53L0X ToF fusion (front) | Cheap; ToF gives true metres at short range (INV-013) |
 | Alerts       | priority arbiter, preemptible queue           | Safety > description ordering |
 | TTS          | libpiper (C API) + espeak-ng                  | Keep Piper (INV12); streamed PCM 22.05kHz mono float |
 | Audio out    | ALSA PCM -> bluealsa -> BT A2DP buds          | C++ path; avoids shelling out |
@@ -54,14 +55,14 @@ Model artifacts:
   yolo11n -> model.ncnn.param + model.ncnn.bin   (fp16 and int8 variants, benchmarked)
   yunet.onnx                                     (~0.34 MB)
   sface.onnx                                     (~37 MB)  OR mobilefacenet ncnn (~4 MB)
-  voices/es_MX-<medium>.onnx + .json             (prefer low/medium over claude-high)
+  voices/es_MX-claude-high.onnx + .json          (shipping default; ald-x_low fallback; CHG-0037)
 
 CMake options:
   LUMINA_FACE_EMBEDDER = sface | mobilefacenet     (default sface)
-  LUMINA_ENABLE_PROXIMITY = OFF                    (default OFF; future ON)
+  LUMINA_ENABLE_PROXIMITY = OFF|ON                 (ON for the aarch64 preset; OFF for host)
   LUMINA_ENABLE_TELEMETRY = OFF                    (default OFF; Day6)
   LUMINA_INFER_PRECISION = fp16 | int8             (default fp16; benchmark int8)
-  LUMINA_INFER_SIZE = 320 | 416                    (default 320)
+  LUMINA_INFER_WIDTH / LUMINA_INFER_HEIGHT = 320 / 256 (default; INV-050)
 
 ---
 
@@ -72,7 +73,9 @@ CMake options:
   => central-crop ROI for detection/face; optional undistort (stretch).
 - Fixed focus: set lens manually for ~0.5-3 m working range.
 - IR-CUT auto: color by day, B&W by night. Ensure IR LED board is off/auto in daylight.
-- NO proximity/distance sensor in bundle. 4 screw holes are for IR LED board (illuminator).
+- Proximity: 1x VL53L0X ToF on I2C1 at 0x29 (front), XSHUT on GPIO17 (reset) - see INV-075 and
+  docs/PROXIMITY.md. A second VL53L0X is a spare for a future rear sensor (deferred). The 4 screw
+  holes are for the IR LED board (illuminator).
 - Verified environment (INV-025): Raspberry Pi Zero 2 W Rev 1.0; Raspberry Pi OS Lite 64-bit
   Debian 13 "trixie" aarch64; kernel 6.18.x+rpt-rpi-v8; CPU reported BCM2837 = 4x Cortex-A53
   @1GHz; GPU bcm2835-vc4; GCC 14.2.1.
@@ -98,7 +101,7 @@ Expected perf (extrapolated from Pi5 NCNN 67ms @640):
                                                                       |
                                         [Piper TTS worker] -> [ALSA/bluealsa sink] -> BT buds
 [telemetry UDP thread] (optional, deferred)
-[IProximitySensor] (null today; optional future source feeding arbiter: instant obstacle tone + wake gate)
+[IProximitySensor] (1x VL53L0X front; feeds arbiter: instant obstacle alert + wake gate)
 ```
 
 Threading rules:
@@ -125,9 +128,9 @@ src/
   vision/detector.{hpp,cpp}               # NCNN YOLO + class subset + ES labels
   vision/face.{hpp,cpp}                   # YuNet + embedder + enroll store
   vision/face_store.{hpp,cpp}             # 3-4 embeddings persisted
-  processing/distance.{hpp,cpp}           # bbox heuristic (+ fuse proximity)
+  processing/distance.{hpp,cpp}           # bbox heuristic + ToF fusion (front)
   sensors/proximity.hpp                   # IProximitySensor, NullProximitySensor, factory
-  sensors/vl53l0x_proximity.{hpp,cpp}     # FUTURE (behind LUMINA_ENABLE_PROXIMITY)
+  sensors/vl53l0x_proximity.{hpp,cpp}     # VL53L0X via i2c-dev + XSHUT addresses (Phase C)
   alerts/arbiter.{hpp,cpp}                # priority, cooldown, preemption
   audio/piper_tts.{hpp,cpp}               # libpiper wrapper
   audio/bluealsa_sink.{hpp,cpp}           # ALSA write to bluealsa
@@ -143,9 +146,9 @@ docs/
 
 ---
 
-## 5. MODULAR PROXIMITY (FUTURE-PROOFING, INV11)
+## 5. MODULAR PROXIMITY (1x VL53L0X front, INV-013/033/075)
 
-Interface (compiles today, used by arbiter; null by default):
+Interface (Phase C, planned; Null by default so the host build needs no hardware):
 
 ```cpp
 struct ProximityReading { float meters; bool valid; };
@@ -165,10 +168,16 @@ class NullProximitySensor final : public IProximitySensor {
 std::unique_ptr<IProximitySensor> make_proximity_sensor(const Config&);
 ```
 
-Uses when a sensor is later added (VL53L0X I2C ~3 USD):
-  - instant "obstaculo cerca" tone bypassing vision pipeline (low latency)
+Hardware (acquired, wired, verified 2026-09-18; INV-013/INV-075):
+  - 1x VL53L0X ToF on I2C1 at 0x29 (front); XSHUT on GPIO17 for reset; model ID 0xEE confirmed.
+  - second VL53L0X kept as a spare for a future rear sensor (reserved: XSHUT GPIO27, addr 0x30),
+    deferred to the very end (after pending tasks + nice-to-haves + telemetry).
+  - read via the kernel i2c-dev interface - no third-party library (INV-022/INV-033).
+
+Uses:
+  - instant "obstaculo cerca" alert bypassing the vision pipeline (low latency)
   - wake-gate: run NCNN only when something is within range (power/thermal saving)
-  - fuse distance: proximity true-meters + bbox heuristic
+  - fuse distance: true ToF metres + bbox heuristic
 Behavior when NullProximitySensor: exactly current beta behavior (no gating).
 
 ---
@@ -182,7 +191,8 @@ Behavior when NullProximitySensor: exactly current beta behavior (no gating).
   # copy es_MX voice .onnx + .json (prefer medium/low) to models/voices/
 
 Class subset (from nightly) + additions: person, dog, cat, chair, table, backpack,
-car, bicycle, motorcycle, bus, truck, stairs(optional custom). ES i18n map reused.
+car, bicycle, bus. (Motorcycle and truck are deferred as a nice-to-have; see OOS-09.)
+ES i18n map reused.
 
 ---
 
@@ -206,9 +216,12 @@ Day 0-1: cross toolchain; libcamera capture OV5647; export YOLO11n->NCNN;
 Day 1-2: vertical slice camera -> NCNN -> Piper ES -> bluealsa buds.
          *** GO/NO-GO GATE ***  (if fail: fallback = hardened Python nightly for demo)
 Day 3:   alert arbiter (priority/preemption/cooldown) + i18n + class labels.
-Day 4:   face enroll + recognition (YuNet + embedder), ROI crop, threshold tuning.
+         *** DONE 2026-09-18 (CHG-0044..0058); see docs/PERFORMANCE.md section 11 ***
+Day 4:   face enroll + recognition (YuNet + embedder), ROI crop, threshold tuning. (NOT STARTED)
 Day 5:   BT autoconnect at boot, thermal/power soak, end-to-end demo script.
 Day 6:   optional UDP telemetry ONLY if all green; else buffer/fallback.
+Post-Day-4 (optional, Phase C): front VL53L0X proximity alert if the core is green.
+Very last (optional): rear VL53L0X sensor + front/rear distinction, after telemetry/nice-to-haves.
 
 Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
 
@@ -220,7 +233,7 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
 - Disable module-suspend-on-idle (prevents first-word delay/stutter).
 - Route Piper PCM to bluealsa PCM; optionally tune `pactl set-port-latency-offset`.
 - Expected added latency 150-300ms; acceptable for description, marginal for safety
-  (future proximity tone mitigates).
+  (proximity ToF alert mitigates).
 
 ---
 
@@ -244,7 +257,7 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
 | 512MB RAM pressure | runtime | MobileFaceNet option; zram; one model resident |
 | 135° distortion + fixed focus | accuracy | central ROI; set focus 0.5-3m; optional undistort |
 | IR tint at night (B&W/orange) | color features | face path tolerant; no color feature; LED auto/off by day |
-| BT latency/glitches | UX/safety | latency tuning; future proximity tone |
+| BT latency/glitches | UX/safety | latency tuning; proximity ToF alert (front) |
 | GPL-3.0 (Piper/espeak-ng) | legal (product) | OK for contest; relicense/alternate TTS for product |
 | Face mis-ID false accept | trust | conservative cosine threshold; require stable multi-frame match |
 
@@ -256,4 +269,27 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
    switch if RAM > ~430MB under load.
 2. Verify IR LED board switching (GPIO/photoresistor) to control tint/power.
 3. Optional undistortion if face accuracy degrades at image edges.
-4. Proximity sensor procurement (3-4 weeks) -> flip LUMINA_ENABLE_PROXIMITY.
+4. Proximity: Phase B COMPLETE (front wired, detected at 0x29, model ID 0xEE, XSHUT reset
+   verified); only the Phase C driver remains (post-Day-4). Rear sensor deferred to the very end
+   (after telemetry). See docs/PROXIMITY.md.
+5. Nice-to-have (deferred): re-enable motorcycle (COCO 3) and truck (COCO 7) narration — a
+   config-only change since their i18n labels are kept dormant (OOS-09, INV-040).
+6. WARNING (later stage): live (uncached) Piper synthesis cannot be preempted — libpiper has no
+   cancellation and can return a whole utterance as one chunk. Mitigated now by pre-warming
+   single-/two-class phrases and capping descriptions at 2 items. Before the IR/proximity path
+   (Phase C) can promise immediate feedback, either make the speech path cache-only (render off the
+   speech thread), vendor cancellation into libpiper, or add an IR-only immediate tone. See
+   docs/PERFORMANCE.md known limitations. A dual-voice fallback (claude-high warmed / ald-xlow
+   misses) was measured (~3.4x faster misses, ~40 MB) but is deferred (CHG-0057).
+7. Day 4 (face recognition) PREREQUISITES — not started. To prepare before coding:
+   - Models: fetch YuNet (`face_detection_yunet_*.onnx`, ~0.34 MB) and SFace
+     (`face_recognition_sface_*.onnx`, ~37 MB) from the OpenCV Zoo into `models/face/` (no fetch
+     script exists yet; `scripts/3-export_models.sh` only exports YOLO). MobileFaceNet on NCNN
+     (~4 MB) is the low-RAM alternative (INV-052).
+   - Code: `vision/face.{hpp,cpp}` + `vision/face_store.{hpp,cpp}` behind `IFaceRecognizer`
+     (INV-030); enroll 3-4 people (FR-03/FR-04); on-demand/low-rate face worker so detection FPS
+     is not regressed (INV-031/INV-050).
+   - Script: `scripts/enroll_face.sh` (referenced in AGENTS section 4 / README but does not exist).
+   - i18n: Spanish greeting phrases (e.g. "Hola, <nombre>."), pre-warmed into the phrase cache.
+   - Config/tests: stable-frames + conservative match threshold (INV-041), mocks + unit tests,
+     on-device enrollment/recognition checklist.

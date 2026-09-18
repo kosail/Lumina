@@ -21,6 +21,10 @@ if(LUMINA_BUILD_TESTS)
         test_main.cpp
         test_bounded_queue.cpp
         test_config.cpp
+        test_distance.cpp
+        test_arbiter.cpp
+        test_scene.cpp
+        test_pipeline.cpp
         test_yolo11_decode.cpp
         test_describer.cpp
         test_caching_tts.cpp)
@@ -37,4 +41,11 @@ if(LUMINA_BUILD_BENCH AND LUMINA_ENABLE_NCNN)
     # They need the NCNN detector, hence the LUMINA_ENABLE_NCNN requirement.
     add_executable(lumina_bench_fps bench_fps.cpp)
     target_link_libraries(lumina_bench_fps PRIVATE lumina_core)
+endif()
+
+if(LUMINA_BUILD_BENCH AND LUMINA_ENABLE_AUDIO)
+    # Alert latency benchmark (NFR-02, INV-051): real CachingTts + AlsaSink, so it
+    # needs the audio path (libpiper + ALSA) rather than NCNN.
+    add_executable(lumina_bench_latency bench_latency.cpp)
+    target_link_libraries(lumina_bench_latency PRIVATE lumina_core)
 endif()

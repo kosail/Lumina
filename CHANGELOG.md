@@ -1321,4 +1321,645 @@
     Deploy es_MX-claude-high.onnx + .json to the Pi and re-measure synthesis time and RSS
     (docs/PERFORMANCE.md section 10); the phrase cache re-renders automatically because the cache
     tag includes the voice path.
+
+# ---------------------------------------------------------------------------
+# CHG-0038 — claude-high re-measurement (shipping voice)
+# ---------------------------------------------------------------------------
+- id: CHG-0038
+  date: 2026-09-16
+  agent: opencode/deepseek-flash
+  type: test
+  status: applied
+  invariants: [INV-042, INV-051, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Re-measured the full pipeline with the shipping voice es_MX-claude-high on the Pi Zero 2 W:
+    RSS 187 MB idle, detection 4.2-4.3 FPS, cached alert event->speech-start 252-298 ms, event->end
+    ~2.16-2.20 s, and "0 new phrase(s)" (cache already warmed and persisted). Recorded in
+    docs/PERFORMANCE.md section 10 with a voice-comparison table against the ald-x_low gate run.
+  rationale: >-
+    Replaces the previous "not yet re-measured" note (CHG-0037). claude-high adds ~30 MB RSS over
+    ald-x_low (model 63 MB vs 21 MB) but stays well under the INV-052 budget, and the cached-alert
+    latency stays inside INV-051. Synthesis/warm time for claude-high was not captured because the
+    phrase cache was already warm from an earlier manual test.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Optional: capture claude-high synthesis/warm time with a fresh cache dir (LUMINA_PHRASE_CACHE_DIR)
+    if needed. Repeated-phrase churn remains for the Day-3 arbiter.
+
+# ---------------------------------------------------------------------------
+# CHG-0039 — Proximity hardware acquired: docs/invariants updated (Phase A)
+# ---------------------------------------------------------------------------
+- id: CHG-0039
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: docs
+  status: applied
+  invariants: [INV-013, INV-022, INV-025, INV-033, INV-040, INV-075, INV-070]
+  supersedes: null
+  summary: >-
+    Recorded the acquisition of two VL53L0X time-of-flight proximity sensors (front + rear, I2C1)
+    and pulled the whole doc set in line: rewrote INV-013/INV-033, extended INV-025 and INV-022,
+    added INV-075 (I2C/GPIO contract), updated FR-02/FR-10/CON-06, RAW_PLAN, AGENTS, README,
+    PERFORMANCE, and added docs/PROXIMITY.md (beginner bring-up + wiring + verification).
+  rationale: >-
+    The sensors are now physical hardware, so the previous "no proximity sensor is present /
+    disabled extension" statements were false and had to change; INV-040 was extended to allow the
+    new front/rear feature strictly after the core three (planned Phase C, post-Day-4). The
+    prior docs also claimed a modular IProximitySensor + Null + factory existed in code; src/sensors/
+    is in fact empty, so INV-033 now records the real implementation status and Phase C creates it.
+    Identity must be verified on-device (model ID 0xEE) because the breakout silkscreen
+    "VL53L0/1XV2" does not distinguish VL53L0X from VL53L1X (INV-001).
+  files:
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/docs/PROXIMITY.md
+    - Lumina-BETA-RPI-2W/scripts/7-setup_i2c.sh
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Phase B: run scripts/7-setup_i2c.sh on the Pi, wire per docs/PROXIMITY.md, verify model ID 0xEE,
+    rear re-addressed to 0x30; record results here. Phase C (after Day 4): implement
+    src/sensors/proximity.hpp + vl53l0x_proximity (i2c-dev, XSHUT) + mock/tests + Config fields +
+    arbiter fusion + distinct front/rear Spanish phrases.
+
+# ---------------------------------------------------------------------------
+# CHG-0040 — Phase B: I2C enabled and VL53L0X identity confirmed
+# ---------------------------------------------------------------------------
+- id: CHG-0040
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: test
+  status: applied
+  invariants: [INV-013, INV-025, INV-075]
+  supersedes: null
+  summary: >-
+    On-device bring-up: the 40-pin header was already soldered; I2C was enabled and
+    /dev/i2c-1 + i2cdetect -y 1 work after reboot; every sensor returned model ID 0xEE at
+    register 0xC0, confirming VL53L0X. Group and modules-load.d steps were NOT needed on this
+    trixie image.
+  rationale: >-
+    Satisfies the INV-001 requirement to verify the chip before any driver work (the silkscreen
+    "VL53L0/1XV2" cannot distinguish VL53L0X from VL53L1X). Also narrows docs/PROXIMITY.md: the
+    i2c group + modules-load.d steps are belt-and-braces only, not required on this image.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PROXIMITY.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Front sensor still to be physically wired (VIN/GND/SDA/SCL/XSHUT on GPIO17) and re-checked at
+    0x29 before Phase C.
+
+# ---------------------------------------------------------------------------
+# CHG-0041 — Scope: one front proximity sensor; rear deferred to the very end
+# ---------------------------------------------------------------------------
+- id: CHG-0041
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-013, INV-025, INV-033, INV-040, INV-075]
+  supersedes: null
+  summary: >-
+    Reduced proximity scope from two sensors (front + rear) to ONE front VL53L0X at 0x29 with
+    XSHUT on GPIO17; the second unit is a spare and the rear sensor is fully deferred until after
+    every pending task, nice-to-have, and telemetry. Removed the dual-address/reassignment scheme
+    and the front/rear distinct-audio requirement from the active scope (kept in a PROXIMITY.md
+    appendix).
+  rationale: >-
+    The dual-sensor path requires an XSHUT-sequenced I2C address reassignment and bus sharing,
+    which adds schedule risk to a 6-day beta; the front sensor alone still closes the
+    non-COCO-hazard gap. Revises the front+rear scope recorded in CHG-0039. Ordering: pending
+    tasks (Day 3 arbiter, Day 4 faces, polish) -> nice-to-haves (INV-050 escalation, telemetry)
+    -> rear sensor last.
+  files:
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/docs/PROXIMITY.md
+    - Lumina-BETA-RPI-2W/scripts/7-setup_i2c.sh
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Phase C (after Day 4) implements the single-sensor driver. Rear sensor remains the very last
+    optional item, after telemetry.
+
+# ---------------------------------------------------------------------------
+# CHG-0042 — Phase B complete: front VL53L0X wired and verified
+# ---------------------------------------------------------------------------
+- id: CHG-0042
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: test
+  status: applied
+  invariants: [INV-013, INV-025, INV-075]
+  supersedes: null
+  summary: >-
+    All Phase B checklist items pass on the target: front VL53L0X wired (VIN=pin1, GND=pin6,
+    SDA=pin3, SCL=pin5, XSHUT=GPIO17/pin11), detected at 0x29, model ID 0xEE, and the XSHUT reset
+    verified via gpioset. The single-sensor proximity hardware path is ready.
+  rationale: >-
+    Confirms the INV-001 hardware verification is fully done and the front sensor is ready for the
+    Phase C driver (single sensor at the default address; no dual-address scheme needed). Closing
+    Phase B removes the remaining hardware risk before Phase C.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PROXIMITY.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None for hardware. Phase C (after Day 4) implements src/sensors/proximity.hpp +
+    vl53l0x_proximity; rear sensor remains the very last optional item.
+
+# ---------------------------------------------------------------------------
+# CHG-0043 — PROXIMITY.md accuracy refinements
+# ---------------------------------------------------------------------------
+- id: CHG-0043
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: docs
+  status: applied
+  invariants: [INV-075]
+  supersedes: null
+  summary: >-
+    Corrected five accuracy nits in docs/PROXIMITY.md: pin label V -> VIN; replaced the
+    orientation-dependent "even pins on the outer edge" tip with a square-pad/pin-1 +
+    multimeter method; flagged that the two extra header pins must be identified before trusting
+    the silkscreen; added the ST VL53L0X URL to References (AGENTS section 8); reworded the
+    Appendix heading and clarified that gpioset must stay alive to hold the XSHUT reset pulse.
+  rationale: >-
+    Keeps the beginner guide strictly correct and consistent with INV-075; pin identification by
+    orientation could mislead a first-time GPIO user.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PROXIMITY.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None. Phase C driver remains the next proximity task (after Day 4).
+
+# ---------------------------------------------------------------------------
+# CHG-0044 — WP1: bbox distance heuristic + config thresholds
+# ---------------------------------------------------------------------------
+- id: CHG-0044
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-030, INV-032, INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    Added src/processing/distance.{hpp,cpp}: a pure, hardware-free bbox heuristic that
+    classifies an object as Near/Mid/Far from its area fraction and decides whether it is
+    centred in the user's path (isNearObstacleInPath). Added Config fields nearAreaFraction,
+    midAreaFraction and pathCenterTolerance with clamping/validation (mid <= near enforced).
+  rationale: >-
+    FR-02 needs a "cerca / in-path" decision before the VL53L0X (Phase C) exists. Keeping it
+    pure and deterministic lets it be unit-tested on the host and reused by the arbiter.
+    Degenerate geometry (zero/negative frame, empty box, NaN) is guarded so it can never
+    divide by zero or produce a spurious alert.
+  files:
+    - Lumina-BETA-RPI-2W/src/processing/distance.hpp
+    - Lumina-BETA-RPI-2W/src/processing/distance.cpp
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/tests/test_distance.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Thresholds (near 0.20, mid 0.06, path tolerance 0.35) are starting values; tune on-device
+    during WP7. Host tests still to be run by the user (no compiler in the agent container).
+
+# ---------------------------------------------------------------------------
+# CHG-0045 — WP2: alert model + priority/preemption arbiter
+# ---------------------------------------------------------------------------
+- id: CHG-0045
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-030, INV-031, INV-032, INV-051, INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    Added src/alerts/alert.hpp (Priority/Source/Alert) and src/alerts/arbiter.{hpp,cpp}: the
+    single owner of the speech queue. Policy: priority ordering, 2-frame stability for
+    descriptions (1 frame for Warning/Safety), 4 s per-key cooldown, 600 ms global gap
+    (bypassed by Warning/Safety), strictly-higher-priority preemption via an atomic interrupt
+    flag the TTS polls, and a bounded queue that never evicts a pending Safety for a
+    Description. Time is injected (no clock inside) so behaviour is deterministic.
+  rationale: >-
+    Replaces the ad-hoc inline hysteresis/cooldown and fixes the observed ~2 s phrase churn
+    (FR-02.2, FR-07.3) while giving real preemption for safety alerts (INV-032, FR-02.3).
+    Thread-safe for one producer + one consumer; all state under a mutex, the interrupt is a
+    separate atomic read lock-free by the TTS. No new dependency (INV-022).
+  files:
+    - Lumina-BETA-RPI-2W/src/alerts/alert.hpp
+    - Lumina-BETA-RPI-2W/src/alerts/arbiter.hpp
+    - Lumina-BETA-RPI-2W/src/alerts/arbiter.cpp
+    - Lumina-BETA-RPI-2W/tests/test_arbiter.cpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    WP4 wires the arbiter into Pipeline and removes the inline speech policy; host tests still
+    to be run by the user (no compiler in the agent container).
+
+# ---------------------------------------------------------------------------
+# CHG-0046 — Fix wrong expectation in isNearObstacleInPath test
+# ---------------------------------------------------------------------------
+- id: CHG-0046
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-070]
+  supersedes: null
+  summary: >-
+    The host suite reported 1 failure in tests/test_distance.cpp: the "big and centred" case used a
+    40x40 box on a 100x100 frame (area fraction 0.16), which is below the 0.20 Near threshold, so
+    isNearObstacleInPath correctly returned false. Replaced it with a 40x60 box (0.24, centred) for
+    the positive case and a 40x60 box centred at 86 for the "Near but off-path" case. Comment for
+    the 24.5 boundary case corrected too.
+  rationale: >-
+    The production heuristic was correct; only the test's assumed area was wrong. All 14 arbiter
+    tests and the rest of the distance tests passed on the real host build.
+  files:
+    - Lumina-BETA-RPI-2W/tests/test_distance.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Re-run `ctest --preset host` to confirm the suite is fully green.
+
+# ---------------------------------------------------------------------------
+# CHG-0047 — Soft-defer motorcycle and truck; add obstacleClassIds
+# ---------------------------------------------------------------------------
+- id: CHG-0047
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-022, INV-040, INV-041, INV-070]
+  supersedes: null
+  summary: >-
+    Removed motorcycle (COCO 3) and truck (COCO 7) from Config::classIds (10 narrated classes
+    remain); their i18n entries stay dormant so re-enabling is a config-only change (FR-08).
+    Added Config::obstacleClassIds = {0,1,2,5,56,57,60} (person, bicycle, car, bus, chair, couch,
+    dining table) for FR-02. Updated test_describer (deferred classes ignored), test_config (new
+    set + obstacles), SPECS OOS-09, RAW_PLAN open items, and the PERFORMANCE warm-count note.
+  rationale: >-
+    Approved Day-3 scope decision: small classes and motorcycle/truck are narrated-but-not-
+    obstacles; motorcycle/truck are deferred as a nice-to-have to protect the schedule. Data-driven
+    so the revert is one config line.
+  files:
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/tests/test_describer.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None for the beta; motorcycle/truck re-enable remains a nice-to-have (RAW_PLAN §12 item 5).
+
+# ---------------------------------------------------------------------------
+# CHG-0048 — WP3: Spanish proximity-alert phrases + warm catalog
+# ---------------------------------------------------------------------------
+- id: CHG-0048
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-042, INV-051, INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    Added i18n::proximityAlertPhrase(bool veryClose) returning "cuidado, obstáculo cerca." /
+    "obstáculo cerca.", and app::alertPhraseCatalog(). main.cpp now warms descriptions and alerts
+    together so a safety alert is never a slow lazy cache miss (INV-051). test_describer covers the
+    catalog.
+  rationale: >-
+    FR-02 alerts must be < 600 ms end to end (INV-051); pre-rendering the two fixed phrases keeps
+    them on the fast cache path. Wording approved by the user (es_MX).
+  files:
+    - Lumina-BETA-RPI-2W/src/i18n/es.hpp
+    - Lumina-BETA-RPI-2W/src/i18n/es.cpp
+    - Lumina-BETA-RPI-2W/src/app/describer.hpp
+    - Lumina-BETA-RPI-2W/src/app/describer.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_describer.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Cache re-renders only the 2 new phrases on the next run; verify on-device in WP7.
+
+# ---------------------------------------------------------------------------
+# CHG-0049 — WP4: scene decision + pipeline/arbiter integration + preemption
+# ---------------------------------------------------------------------------
+- id: CHG-0049
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-030, INV-031, INV-032, INV-051, INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    Added app::buildSceneAlert (pure): a near/mid in-path obstacle yields a Warning alert (FR-02),
+    otherwise the multi-class Description; dedupKey = text. Rewired Pipeline to submit alerts to the
+    AlertArbiter and to speak the highest-priority one, passing the arbiter's interrupt flag to the
+    TTS for real preemption (INV-032); removed the inline hysteresis/cooldown/SpeechRequest/
+    m_stopSpeech. Added AlertArbiter::clearCandidate() (called on empty frames) so stability counts
+    only consecutive sightings. New tests: test_scene.cpp, test_pipeline.cpp, and an arbiter
+    clearCandidate case.
+  rationale: >-
+    Completes the Day-3 arbiter: fixes the observed ~2 s phrase churn, adds real preemption, and
+    keeps the decision logic pure/testable. clearCandidate preserves the old hysteresis-reset
+    semantics so a scene that disappears and returns must be re-observed.
+  files:
+    - Lumina-BETA-RPI-2W/src/app/scene.hpp
+    - Lumina-BETA-RPI-2W/src/app/scene.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.hpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/src/alerts/arbiter.hpp
+    - Lumina-BETA-RPI-2W/src/alerts/arbiter.cpp
+    - Lumina-BETA-RPI-2W/tests/test_scene.cpp
+    - Lumina-BETA-RPI-2W/tests/test_pipeline.cpp
+    - Lumina-BETA-RPI-2W/tests/test_arbiter.cpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Run host tests, then on-device WP7: single alert < 600 ms, no repeat within 4 s, re-announce on
+    scene change, and a warning cutting a description.
+
+# ---------------------------------------------------------------------------
+# CHG-0050 — Mid-distance obstacles no longer preempt
+# ---------------------------------------------------------------------------
+- id: CHG-0050
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-032, INV-051, INV-070]
+  supersedes: null
+  summary: >-
+    buildSceneAlert now assigns Priority::Warning to a Near in-path obstacle but
+    Priority::Description to a Mid one, so only a Near obstacle preempts narration; a Mid obstacle
+    is spoken when the arbiter is free. Source stays Source::Obstacle. test_scene updated.
+  rationale: >-
+    User decision: a Mid-distance hazard is not imminent enough to cut off an utterance, while a
+    Near one is. Avoids excessive interruption while keeping the near warning safety-first.
+  files:
+    - Lumina-BETA-RPI-2W/src/app/scene.cpp
+    - Lumina-BETA-RPI-2W/tests/test_scene.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Tune the Near/Mid area thresholds on-device during WP7 if warnings fire too often or too late.
+
+# ---------------------------------------------------------------------------
+# CHG-0051 — bench_latency: on-device alert latency benchmark
+# ---------------------------------------------------------------------------
+- id: CHG-0051
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-051, INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    Added tests/bench_latency.cpp and a `lumina_bench_latency` target gated on LUMINA_BUILD_BENCH +
+    LUMINA_ENABLE_AUDIO. It drives the real AlertArbiter + CachingTts + AlsaSink (discard-sink
+    fallback) with a TimingSink that records event->first-audio and aborts each utterance after the
+    first chunk, reporting min/avg/p95/max. AGENTS §9 documents the command; PERFORMANCE §11
+    records the method and a results table to fill after the WP7 run.
+  rationale: >-
+    NFR-02/INV-051 require a measured < 600 ms event-to-alert. This isolates the cached TTS + ALSA
+    path on-device; the Bluetooth radio hop (~150-300 ms) is called out separately.
+  files:
+    - Lumina-BETA-RPI-2W/tests/bench_latency.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Build with -DLUMINA_BUILD_BENCH=ON -DLUMINA_ENABLE_AUDIO=ON and run on the Pi; paste numbers
+    into PERFORMANCE.md §11.
+
+# ---------------------------------------------------------------------------
+# CHG-0052 — bench_latency: fix two compiler warnings
+# ---------------------------------------------------------------------------
+- id: CHG-0052
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    Removed a trailing backslash inside a // comment (-Wcomment) and consumed the [[nodiscard]]
+    result of DiscardSink::open() with an error check (-Wunused-result) in tests/bench_latency.cpp.
+  rationale: >-
+    The project treats warnings as signals (AGENTS §6/§11); the new bench file must compile clean.
+  files:
+    - Lumina-BETA-RPI-2W/tests/bench_latency.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild; expect zero warnings.
+
+# ---------------------------------------------------------------------------
+# CHG-0053 — WP7 on-device verification of the Day-3 arbiter
+# ---------------------------------------------------------------------------
+- id: CHG-0053
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: test
+  status: applied
+  invariants: [INV-032, INV-051, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Two on-device runs (desk + attached to glasses). Cached alert/description latency 252-264 ms
+    (433 ms cold); no ~2 s churn (warnings 9-24 s apart); mid "obstaculo cerca." detected and
+    spoken, non-preempting; preemption confirmed but 738 ms to speech-start when cutting a cached
+    description; bench_latency min 0.16 / avg 0.42 / p95 0.18 / max 2.69 ms (bluealsa); FPS 4.1-4.3
+    (dips 2.4-3.2 during live synthesis); RSS 187-212 MB. Live multi-class lazy misses took
+    6.7-9.2 s to first audio and blocked the speech thread, delaying queued alerts up to ~2 s.
+  rationale: >-
+    Confirms the arbiter behavior and quantifies the remaining problem: live (uncached) synthesis
+    dominates latency and is not interruptible (libpiper has no cancellation), which also delays
+    safety-priority alerts. Numbers recorded in docs/PERFORMANCE.md section 11.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Addressed by CHG-0054 (abort fixes) and CHG-0055 (pre-warm + item cap); the residual live
+    synthesis limitation is documented as a WARNING for a later stage.
+
+# ---------------------------------------------------------------------------
+# CHG-0054 — Faster preemption: smaller cache/write chunks + sink flush
+# ---------------------------------------------------------------------------
+- id: CHG-0054
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-032, INV-051, INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    CachingTts chunkFrames 4096 -> 1024 (~47 ms); PiperTts writes each returned chunk to the sink
+    in 1024-sample sub-blocks, checking stop between them; Pipeline::speechLoop calls sink->stop()
+    on preemption to drop buffered audio before the next utterance. Result: a preempting alert is
+    no longer stuck behind the tail of a cached utterance.
+  rationale: >-
+    The 738 ms preemption was caused by coarse abort granularity (~186 ms chunks) plus buffered
+    audio playing out. libpiper has no cancellation, so this is the maximum we can do for live
+    synthesis (only its tail write is aborable); the rest is mitigated by CHG-0055.
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/caching_tts.hpp
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Re-measure the preempted-alert latency on-device; expect a substantial drop from 738 ms.
+
+# ---------------------------------------------------------------------------
+# CHG-0055 — Pre-warm two-class phrases; cap descriptions at two items
+# ---------------------------------------------------------------------------
+- id: CHG-0055
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-042, INV-051, INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    Added app::twoClassPhraseCatalog (every unordered pair of the 10 narrated classes, counts 1..2,
+    ordering matching describeDetections) and warm singles + pairs + alerts (212 phrases, one-time).
+    Added Config::maxNarratedItems (default 2, clamped 1..3) and scene.cpp now passes it to
+    describeDetections, removing 3-class sentences that had no cached form.
+  rationale: >-
+    Live synthesis (6.7-9.2 s) was the dominant latency and blocked safety alerts; making the
+    common descriptions cache hits and bounding the sentence size removes almost all live synthesis
+    from the normal path. Counts >2 in a two-class phrase remain lazy misses (documented).
+  files:
+    - Lumina-BETA-RPI-2W/src/app/describer.hpp
+    - Lumina-BETA-RPI-2W/src/app/describer.cpp
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/app/scene.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_describer.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/tests/test_scene.cpp
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    First run after this change renders 212 phrases (minutes, one-time). Re-run the glasses scenario
+    to confirm two-class descriptions are cache hits and no alert queues behind a long synthesis.
+    Live-synthesis non-interruptibility remains a WARNING for a later stage (RAW_PLAN section 12).
+
+# ---------------------------------------------------------------------------
+# CHG-0056 — Fix libcamera shutdown segfault (callback vs stop race)
+# ---------------------------------------------------------------------------
+- id: CHG-0056
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-011, INV-031, INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    Fixed an intermittent segfault on Ctrl-C ("Camera in Stopping state trying queueRequest()").
+    onRequestCompleted() could pass the m_running check, then call queueRequest()/touch buffers after
+    stop() had begun tearing down the camera, requests, and mappings. Added a callback mutex plus a
+    m_stopping flag; the callback holds the mutex for its whole body and stop() flips the flag under
+    it (released before camera->stop(), which may deliver cancellation callbacks synchronously).
+    Removed the signal disconnect() (unsafe mid-emission).
+  rationale: >-
+    The m_running-only guard was a TOCTOU race; a callback in flight during teardown caused a
+    use-after-free (segfault). Serializing callback vs stop() closes it without disconnecting the
+    signal. Pre-existing, probabilistic bug exposed by longer sessions.
+  files:
+    - Lumina-BETA-RPI-2W/src/capture/libcamera_source.cpp
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Validate on-device: Ctrl-C repeatedly (>=10x) and a 3-minute soak then Ctrl-C; require
+    "Lumina stopped" every time with no libcamera error/segfault.
+
+# ---------------------------------------------------------------------------
+# CHG-0057 — Dual-voice fallback measured; deferred
+# ---------------------------------------------------------------------------
+- id: CHG-0057
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: decision
+  status: applied
+  invariants: [INV-042, INV-051, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Measured cached playback (claude 0.13-0.16 ms, ald-xlow 0.13-0.19 ms) and live synthesis
+    (claude ~7.5k samples/s, ald-xlow ~25.6k samples/s => ~3.4x faster; RSS 189 vs 148 MB). A
+    "claude-high for warmed phrases, ald-xlow for cache misses" fallback is viable and would cut a
+    ~8 s miss to ~2.3 s, but does NOT make synthesis interruptible. Deferred to the later-stage
+    live-synthesis work; the WARNING in PERFORMANCE section 11 stands.
+  rationale: >-
+    B1/B2 already eliminated live synthesis on the warmed path, so the fallback's marginal benefit is
+    small now, and it adds a second resident model plus voice inconsistency. Revisit together with
+    the cache-only/IR-tone options when the IR sensor lands (Phase C).
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None now. If pursued later: add a RouterTts + second PiperTts + distinct cache tags; re-measure
+    miss latency and RSS.
+
+# ---------------------------------------------------------------------------
+# CHG-0058 — Day 3 complete; libcamera shutdown-race fix validated
+# ---------------------------------------------------------------------------
+- id: CHG-0058
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: test
+  status: applied
+  invariants: [INV-011, INV-031, INV-051, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Validated the CHG-0056 shutdown fix on the Pi: 11 consecutive start/Ctrl-C cycles (4 + 7), all
+    ending in "Lumina stopped", with no "Camera in Stopping state trying queueRequest()" and no
+    segfault. One of the runs was a ~4.5-minute soak with continuous near/mid alerts and
+    descriptions. Observed: FPS 4.1-4.4, RSS 184-188 MB, cached alerts 250-276 ms, mid 257 ms,
+    descriptions cache-hit (~255 ms), no live synthesis misses. Day 3 is complete.
+  rationale: >-
+    Meets the CHG-0056 follow-up (>=10 Ctrl-C cycles + a >=3-minute soak) and confirms that
+    serializing the completion callback against stop() closes the teardown race. Closes Day 3;
+    Day 4 (face recognition) is documented in RAW_PLAN sections 8/12 but not started.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Day 4 not started: fetch YuNet + SFace into models/face/, add scripts/enroll_face.sh, implement
+    IFaceRecognizer + face_store, integration + tests, and Spanish greetings. See RAW_PLAN section 12.
 ```

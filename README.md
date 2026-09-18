@@ -30,6 +30,7 @@ support, cloud processing, desktop/GUI, and multi-device Bluetooth.
 | Board | Raspberry Pi Zero 2 W Rev 1.0 — reported BCM2837, quad-core Arm Cortex-A53 @ 1 GHz, 512 MB LPDDR2 |
 | Camera | OV5647 5 MP, ~135° diagonal, auto IR-CUT (75/175), fixed manual focus (via libcamera) |
 | Audio | Bluetooth A2DP bone-conduction earbuds (single paired device) |
+| Proximity | 1× front VL53L0X time-of-flight (I²C1 `0x29`, XSHUT on GPIO17); second unit spare, rear deferred — see `docs/PROXIMITY.md` |
 | Enclosure | Solid aluminum case (thermal headroom is comfortable) |
 | OS | Raspberry Pi OS Lite 64-bit based on Debian 13 "trixie" (glibc, aarch64; kernel 6.18.x), headless |
 
@@ -43,6 +44,7 @@ support, cloud processing, desktop/GUI, and multi-device Bluetooth.
 | Face | OpenCV `objdetect` (YuNet + SFace) | MobileFaceNet/NCNN is the low-RAM alternative |
 | TTS | [libpiper](https://github.com/OHF-Voice/piper1-gpl) + espeak-ng | Spanish (`es_MX`) voice, streamed PCM |
 | Audio out | ALSA -> `bluealsa` -> BlueZ | Single A2DP sink |
+| Proximity | VL53L0X over Linux `i2c-dev` | No third-party library; front zone alert |
 | Telemetry | UDP (optional, off by default) | Deferred; never touches the core path |
 
 ## Architecture
@@ -55,7 +57,7 @@ support, cloud processing, desktop/GUI, and multi-device Bluetooth.
                                              |
                        [Piper TTS] -> [ALSA/bluealsa sink] -> Bluetooth earbuds
 [telemetry UDP]  (optional, disabled by default)
-[IProximitySensor] (null today; modular hook for a future distance sensor)
+[IProximitySensor] (1x front VL53L0X; short-range alert; see docs/PROXIMITY.md)
 ```
 
 Design rules: interface-first with dependency injection, bounded queues that drop stale frames,
@@ -69,14 +71,14 @@ src/
   capture/      libcamera camera source (ICamera)
   vision/       NCNN object detector, face detection/recognition, enrollment store
   processing/   distance heuristic
-  sensors/      IProximitySensor + NullProximitySensor (future VL53L0X)
+  sensors/      IProximitySensor + NullProximitySensor + VL53L0X (front, I2C1)
   alerts/       alert arbiter (priority, cooldown, preemption)
   audio/        Piper TTS wrapper (ITtsEngine), BlueALSA audio sink (IAudioSink)
   app/          pipeline orchestrator + Spanish describer
   i18n/         Spanish message catalog
   telemetry/    optional UDP telemetry
 models/         yolo11n_ncnn/, face/, voices/
-scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, enroll_face.sh, bt_setup.sh
+scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, 7-setup_i2c.sh, enroll_face.sh, bt_setup.sh
 tests/          unit tests (doctest) and on-device benchmarks
 cmake/          aarch64 toolchain and find-modules
 ```
@@ -146,7 +148,7 @@ Compile-time options (defaults shown):
 | `LUMINA_ENABLE_LIBCAMERA` | `OFF` | Build the libcamera capture path |
 | `LUMINA_ENABLE_NCNN` | `OFF` | Build the NCNN detector path |
 | `LUMINA_ENABLE_AUDIO` | `OFF` | Build the Piper TTS + ALSA/bluealsa path |
-| `LUMINA_ENABLE_PROXIMITY` | `OFF` | Build the (future) proximity sensor path |
+| `LUMINA_ENABLE_PROXIMITY` | `OFF` | Build the VL53L0X proximity path (`ON` in the aarch64 preset) |
 | `LUMINA_ENABLE_TELEMETRY` | `OFF` | Build the optional UDP telemetry path |
 
 ## Run
@@ -173,11 +175,12 @@ Runtime environment variables (all optional):
 
 ## Roadmap
 
-1. Runtime skeleton, capture, detector, TTS-to-Bluetooth vertical slice (Day-2 gate).
-2. Alert arbiter, Spanish catalog, face enrollment and recognition.
-3. Boot-time Bluetooth autoconnect, soak testing, demo hardening.
-4. Optional UDP telemetry (only after everything else passes).
-5. Modular proximity sensor once hardware is available.
+1. Runtime skeleton, capture, detector, TTS-to-Bluetooth vertical slice (Day-2 gate). — **done**
+2. Alert arbiter + Spanish alert catalog (Day 3). — **done** (see `docs/PERFORMANCE.md` §11)
+3. Face enrollment and recognition (Day 4). — **not started**
+4. Boot-time Bluetooth autoconnect, soak testing, demo hardening.
+5. Optional UDP telemetry (only after everything else passes).
+6. Front VL53L0X proximity alert once the core is green; rear sensor deferred to the very end (`docs/PROXIMITY.md`).
 
 ## License and third-party notices
 

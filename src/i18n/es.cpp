@@ -150,4 +150,9 @@ const char* numberWord(int count) noexcept {
     }
 }
 
+const char* proximityAlertPhrase(bool veryClose) noexcept {
+    // Two fixed phrasings so both can be pre-rendered into the TTS cache (INV-051).
+    return veryClose ? "cuidado, obstáculo cerca." : "obstáculo cerca.";
+}
+
 }  // namespace lumina::i18n

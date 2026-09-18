@@ -25,6 +25,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include "app/describer.hpp"
 #include "app/pipeline.hpp"
@@ -130,7 +131,17 @@ int main(int argc, char** argv)
         cacheConfig.directory = cacheDir;
     }
     lumina::audio::CachingTts tts(piper, cacheConfig);
-    const std::size_t rendered = tts.warm(lumina::app::phraseCatalog(config));
+    // Warm descriptions AND alert phrases together so both play instantly
+    // (INV-051); a safety alert must never be a slow lazy cache miss. Single-class,
+    // two-class, and alert phrases are warmed; anything else is a lazy miss. The
+    // first run after changing the voice/catalog can take several minutes — this is
+    // one-time and persisted in the cache directory.
+    std::vector<std::string> warmPhrases = lumina::app::phraseCatalog(config);
+    const std::vector<std::string> pairPhrases = lumina::app::twoClassPhraseCatalog(config);
+    warmPhrases.insert(warmPhrases.end(), pairPhrases.begin(), pairPhrases.end());
+    const std::vector<std::string> alertPhrases = lumina::app::alertPhraseCatalog();
+    warmPhrases.insert(warmPhrases.end(), alertPhrases.begin(), alertPhrases.end());
+    const std::size_t rendered = tts.warm(warmPhrases);
     LUMINA_LOG_INFO("phrase cache: {} new phrase(s) rendered into '{}'",
                     rendered,
                     cacheConfig.directory);

@@ -4,13 +4,17 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+
 #include "app/describer.hpp"
 
 #include "core/config.hpp"
 #include "core/detection.hpp"
 
+using lumina::app::alertPhraseCatalog;
 using lumina::app::describeDetections;
 using lumina::app::phraseCatalog;
+using lumina::app::twoClassPhraseCatalog;
 using lumina::core::Config;
 using lumina::core::defaultConfig;
 using lumina::core::Detection;
@@ -52,16 +56,19 @@ TEST_CASE("describeDetections: masculine singular article (un carro)")
     CHECK(describeDetections({makeDetection(2)}, config) == "un carro enfrente.");
 }
 
-TEST_CASE("describeDetections: feminine singular article (una moto)")
+TEST_CASE("describeDetections: feminine singular article (una bicicleta)")
 {
     const Config config = defaultConfig();
-    CHECK(describeDetections({makeDetection(3)}, config) == "una moto enfrente.");
+    CHECK(describeDetections({makeDetection(1)}, config) == "una bicicleta enfrente.");
 }
 
-TEST_CASE("describeDetections: consonant-ending plural keeps spelled number")
+TEST_CASE("describeDetections: deferred classes (motorcycle, truck) are not narrated")
 {
+    // Motorcycle (3) and truck (7) were deferred as a nice-to-have (INV-040), so the
+    // default class set must ignore them even though i18n still has dormant labels.
     const Config config = defaultConfig();
-    CHECK(describeDetections({makeDetection(7), makeDetection(7)}, config) == "dos camiones enfrente.");
+    CHECK(describeDetections({makeDetection(3)}, config).empty());
+    CHECK(describeDetections({makeDetection(7)}, config).empty());
 }
 
 TEST_CASE("describeDetections: accented-vowel noun plural")
@@ -122,4 +129,32 @@ TEST_CASE("phraseCatalog: one phrase per class per count")
     CHECK(phrases.front() == "una persona enfrente.");
     CHECK(phrases[1] == "dos personas enfrente.");
     CHECK(phrases[2] == "tres personas enfrente.");
+}
+
+TEST_CASE("alertPhraseCatalog: near and mid proximity phrases")
+{
+    const auto phrases = alertPhraseCatalog();
+    REQUIRE(phrases.size() == 2);
+    CHECK(phrases[0] == "cuidado, obstáculo cerca.");
+    CHECK(phrases[1] == "obstáculo cerca.");
+}
+
+TEST_CASE("twoClassPhraseCatalog: pairs of narrated classes, counts 1..2")
+{
+    const Config config = defaultConfig();
+    const auto phrases = twoClassPhraseCatalog(config, 2);
+
+    const std::size_t classCount = config.classIds.size();
+    const std::size_t pairs = classCount * (classCount - 1) / 2;
+    CHECK(phrases.size() == pairs * 4); // 4 count combinations per pair
+
+    const auto has = [&phrases](const std::string& phrase) {
+        return std::find(phrases.begin(), phrases.end(), phrase) != phrases.end();
+    };
+    // person (class 0) precedes bicycle (class 1); the higher count goes first,
+    // matching describeDetections.
+    CHECK(has("una persona y una bicicleta enfrente."));
+    CHECK(has("dos personas y una bicicleta enfrente."));
+    CHECK(has("dos bicicletas y una persona enfrente."));
+    CHECK(has("dos personas y dos bicicletas enfrente."));
 }

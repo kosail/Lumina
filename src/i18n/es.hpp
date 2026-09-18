@@ -45,4 +45,9 @@ enum class ObjectClass {
 // emit digits, to avoid relying on the TTS engine's number normalization.
 [[nodiscard]] const char* numberWord(int count) noexcept;
 
+// Short Spanish proximity/obstacle alert (FR-02). `veryClose` selects the more
+// urgent wording ("cuidado, obstáculo cerca.") over the gentler one
+// ("obstáculo cerca."). Returns a stable string literal, never null.
+[[nodiscard]] const char* proximityAlertPhrase(bool veryClose) noexcept;
+
 }  // namespace lumina::i18n

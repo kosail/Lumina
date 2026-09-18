@@ -62,6 +62,9 @@ add_library(lumina_core STATIC
     src/core/logging.cpp
     src/i18n/es.cpp
     src/vision/yolo11_decode.cpp
+    src/processing/distance.cpp
+    src/alerts/arbiter.cpp
+    src/app/scene.cpp
     src/app/describer.cpp
     src/app/pipeline.cpp
     src/audio/caching_tts.cpp)  # describer/pipeline/caching_tts use interfaces only -> host-buildable
