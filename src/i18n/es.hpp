@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <string_view>
+
 namespace lumina::i18n {
 
 // The object classes Lúmina narrates in the beta (a subset of the 80 COCO
@@ -49,5 +52,11 @@ enum class ObjectClass {
 // urgent wording ("cuidado, obstáculo cerca.") over the gentler one
 // ("obstáculo cerca."). Returns a stable string literal, never null.
 [[nodiscard]] const char* proximityAlertPhrase(bool veryClose) noexcept;
+
+// Spanish greeting for a recognized enrolled person (FR-03): "<nombre> está
+// enfrente" (exact approved wording). The name is inserted verbatim because it is
+// user-provided enrollment data. Building it here keeps phrase wording out of
+// pipeline logic and lets main() pre-warm every enrolled name (INV-051).
+[[nodiscard]] std::string greeting(std::string_view name);
 
 }  // namespace lumina::i18n

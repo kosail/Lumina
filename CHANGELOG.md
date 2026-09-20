@@ -1962,4 +1962,402 @@
   follow_up: >-
     Day 4 not started: fetch YuNet + SFace into models/face/, add scripts/enroll_face.sh, implement
     IFaceRecognizer + face_store, integration + tests, and Spanish greetings. See RAW_PLAN section 12.
+
+# ---------------------------------------------------------------------------
+# CHG-0059 — Day 4: face models fetch script + provenance docs
+# ---------------------------------------------------------------------------
+- id: CHG-0059
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: chore
+  status: applied
+  invariants: [INV-001, INV-025, INV-040]
+  supersedes: null
+  summary: >-
+    Added scripts/8-fetch_face_models.sh (SHA-256-pinned YuNet 2023mar + SFace 2021dec from the
+    OpenCV Zoo) and models/face/README.md with provenance and licensing; updated models/README.md.
+  rationale: >-
+    YuNet 2023mar is the OpenCV 4.x export; the newer 2026may model has dynamic dims and targets the
+    OpenCV 5.x ONNX-Runtime engine, so it must not be substituted (opencv_zoo README, 2026-09-18).
+    The pinned SHA-256 values are the Git-LFS object ids, so the downloader must follow redirects
+    (curl -L) or it silently fetches a ~130-byte pointer. Licenses: YuNet MIT, SFace Apache-2.0.
+  files:
+    - Lumina-BETA-RPI-2W/scripts/8-fetch_face_models.sh
+    - Lumina-BETA-RPI-2W/models/face/README.md
+    - Lumina-BETA-RPI-2W/models/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Run the script on the laptop to populate models/face/ before configuring with LUMINA_ENABLE_FACE.
+
+# ---------------------------------------------------------------------------
+# CHG-0060 — Day 4: OpenCV build wiring (LUMINA_ENABLE_FACE)
+# ---------------------------------------------------------------------------
+- id: CHG-0060
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-021, INV-022, INV-025, INV-030]
+  supersedes: null
+  summary: >-
+    Added option LUMINA_ENABLE_FACE (OFF by default). When ON it resolves OpenCV 4.10 from the
+    sysroot (OpenCV_DIR -> cmake/rpi-sysroot/.../cmake/opencv4), links only core/imgproc/objdetect,
+    compiles src/vision/face.cpp into lumina_core, defines LUMINA_HAS_FACE, and adds the
+    lumina_enroll executable when LIBCAMERA is also enabled.
+  rationale: >-
+    Debian's OpenCVConfig self-locates relative to its cmake/opencv4 directory, so setting OpenCV_DIR
+    keeps the whole resolution inside the sysroot and never touches a host OpenCV. Selecting the
+    three components avoids pkg-config's monolithic opencv4 (which links ~60 modules incl. highgui).
+    Host builds stay OpenCV-free, preserving AGENTS section 9 host tests.
+  files:
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Verify the aarch64 configure finds OpenCV without re-root leaks; documented fallback is
+    pkg_check_modules(opencv4) if find_package fails.
+
+# ---------------------------------------------------------------------------
+# CHG-0061 — Day 4: IFaceRecognizer + FaceStore + FaceGreeter (pure, host-tested)
+# ---------------------------------------------------------------------------
+- id: CHG-0061
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-030, INV-041]
+  supersedes: null
+  summary: >-
+    Added the OpenCV-free IFaceRecognizer interface and FaceMatch value type, the pure-C++
+    FaceStore (up to K embeddings per person, cosine matching with threshold + best-vs-second
+    margin, versioned atomic binary persistence with a model id), the FaceGreeter policy
+    (consecutive-frame stability + per-person cooldown), a mock, and host unit tests.
+  rationale: >-
+    Keeps matching/stability logic host-testable and OpenCV fully isolated (INV-030). The margin
+    rejects ambiguous near-ties between enrolled people, which lets the threshold stay at the
+    documented SFace cosine value (0.363) instead of inflating it and rejecting real users.
+  files:
+    - Lumina-BETA-RPI-2W/src/vision/face_recognizer.hpp
+    - Lumina-BETA-RPI-2W/src/vision/face_store.hpp
+    - Lumina-BETA-RPI-2W/src/vision/face_store.cpp
+    - Lumina-BETA-RPI-2W/src/app/face_greeter.hpp
+    - Lumina-BETA-RPI-2W/src/app/face_greeter.cpp
+    - Lumina-BETA-RPI-2W/tests/mocks/mock_face_recognizer.hpp
+    - Lumina-BETA-RPI-2W/tests/test_face_store.cpp
+    - Lumina-BETA-RPI-2W/tests/test_face_greeter.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: None.
+
+# ---------------------------------------------------------------------------
+# CHG-0062 — Day 4: OpenCV FaceEmbedder + FaceRecognizer
+# ---------------------------------------------------------------------------
+- id: CHG-0062
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-001, INV-011, INV-025, INV-050]
+  supersedes: null
+  summary: >-
+    Added the OpenCV implementation: FaceEmbedder (YuNet FaceDetectorYN -> largest face ->
+    FaceRecognizerSF alignCrop/feature) and FaceRecognizer (embedder + FaceStore + match policy),
+    with RGB888->BGR conversion, a configurable central ROI, and cv::setNumThreads(1).
+  rationale: >-
+    OpenCV's face models expect BGR (the opencv_zoo demo reads BGR via imread); the camera delivers
+    RGB888. setNumThreads(1) prevents OpenCV's pool from oversubscribing the four cores NCNN
+    already uses (INV-050). The central ROI follows INV-011 (lens-edge distortion).
+  files:
+    - Lumina-BETA-RPI-2W/src/vision/face.hpp
+    - Lumina-BETA-RPI-2W/src/vision/face.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Validate channel order and tune YuNet score threshold, SFace threshold, and margin on-device
+    (INV-001); record in docs/PERFORMANCE.md.
+
+# ---------------------------------------------------------------------------
+# CHG-0063 — Day 4: face config + Spanish greeting + Alert.preStabilized
+# ---------------------------------------------------------------------------
+- id: CHG-0063
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-032, INV-042, INV-051]
+  supersedes: null
+  summary: >-
+    Added face config fields (faceEnabled, faceIntervalMs, faceGreetingCooldownMs,
+    faceMinBoxFraction, faceRoiFraction, faceMatchMargin, faceEmbeddingsPerPerson), changed
+    faceMatchThreshold default 0.50 -> 0.363, added i18n::greeting(name) = "<name> está enfrente",
+    and added Alert.preStabilized (arbiter accepts such alerts without scene stability).
+  rationale: >-
+    The arbiter's descriptionStableFrames (2) would suppress a one-shot greeting; preStabilized is a
+    minimal, explicit bypass for producers that already applied their own stability policy. 0.363 is
+    the OpenCV Zoo cosine reference; the margin handles ambiguity between enrolled people.
+  files:
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/i18n/es.hpp
+    - Lumina-BETA-RPI-2W/src/i18n/es.cpp
+    - Lumina-BETA-RPI-2W/src/alerts/alert.hpp
+    - Lumina-BETA-RPI-2W/src/alerts/arbiter.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: Confirm greeting wording and priority on-device.
+
+# ---------------------------------------------------------------------------
+# CHG-0064 — Day 4: lumina_enroll tool + enroll_face.sh
+# ---------------------------------------------------------------------------
+- id: CHG-0064
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-021, INV-040]
+  supersedes: null
+  summary: >-
+    Added src/tools/enroll_face.cpp (lumina_enroll) and scripts/enroll_face.sh: capture N frames,
+    embed the largest face per frame, append up to K embeddings for one named person, and save the
+    store atomically. Appends to an existing store so N people need no recompilation.
+  rationale: >-
+    FR-04 requires a scriptable, one-person-per-run enrollment. Live capture from the shipping
+    sensor matches the recognition domain. The tool is headless (INV-021).
+  files:
+    - Lumina-BETA-RPI-2W/src/tools/enroll_face.cpp
+    - Lumina-BETA-RPI-2W/scripts/enroll_face.sh
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: Enroll 3-4 people on-device and confirm the store reloads after reboot.
+
+# ---------------------------------------------------------------------------
+# CHG-0065 — Day 4: pipeline face worker + greeting integration
+# ---------------------------------------------------------------------------
+- id: CHG-0065
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-031, INV-032, INV-050]
+  supersedes: null
+  summary: >-
+    Integrated face recognition into Pipeline: a dedicated low-rate face worker thread with
+    single-slot request/result queues; the inference thread dispatches on a large-enough person at
+    faceIntervalMs and drains results into FaceGreeter; greetings are Description priority
+    (non-preempting), dedup key "face:<name>". main() pre-warms a greeting for every enrolled name.
+  rationale: >-
+    Face work runs off the inference thread (INV-031) and is throttled to protect detection FPS
+    (INV-050). Keeping arbiter submission on the inference thread preserves the arbiter's
+    single-producer contract. Greetings never preempt safety alerts (INV-032).
+  files:
+    - Lumina-BETA-RPI-2W/src/app/pipeline.hpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_pipeline_face.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    On-device verification pending (enroll, greet by name, reject strangers, FPS/RSS with faces on);
+    record results in docs/PERFORMANCE.md.
+
+# ---------------------------------------------------------------------------
+# CHG-0066 — Day 4: pre-build audit fixes (exceptions, robustness, wiring)
+# ---------------------------------------------------------------------------
+- id: CHG-0066
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-030, INV-050, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed issues found in a pre-build audit of the Day-4 face code: (H1) wrapped every OpenCV call
+    in try/catch so no cv::Exception can cross the face worker thread or escape load(); (H2) wired
+    core::Config faceMatchThreshold/faceMatchMargin/faceRoiFraction into FaceModelConfig in main so
+    the approved tuning actually takes effect; (H3) bounded FaceStore::load (dimension <= 4096,
+    persons <= 1000, embeddings/person <= 100, total <= 64 MB) to reject corrupt files; (M1)
+    allowed an empty store to round-trip; (M2) rejected embeddings whose dimension differs from the
+    store's; (M3) validated the persisted model id instead of overwriting it; (M4) validated frame
+    geometry before building a cv::Mat; (M5) guarded the ROI against zero size; (M6) removed the
+    spurious first-run store warning. Also removed dead config faceEmbeddingsPerPerson, enforced
+    faceIntervalMs >= 100 ms and faceGreetingCooldownMs >= 1000 ms, stopped pre-stabilized alerts
+    from perturbing the arbiter's scene candidate, and removed unused includes/redundant logic.
+  rationale: >-
+    An uncaught OpenCV exception in the face thread would call std::terminate (AGENTS section 6).
+    The unwired Config fields made the approved 0.363 threshold/margin/ROI dead. Unbounded reads
+    from a corrupt enrollment file could OOM the Pi (INV-052). A 0 ms face interval could starve the
+    detector (INV-050).
+  files:
+    - Lumina-BETA-RPI-2W/src/vision/face.cpp
+    - Lumina-BETA-RPI-2W/src/vision/face.hpp
+    - Lumina-BETA-RPI-2W/src/vision/face_store.cpp
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/app/face_greeter.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/src/alerts/arbiter.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/tests/test_face_store.cpp
+    - Lumina-BETA-RPI-2W/tests/test_pipeline_face.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: Rebuild and run the host tests; confirm the aarch64 configure still finds OpenCV.
+
+# ---------------------------------------------------------------------------
+# CHG-0067 — Day 4: photo-based enrollment (plus camera as an option)
+# ---------------------------------------------------------------------------
+- id: CHG-0067
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: impl
+  status: applied
+  invariants: [INV-021, INV-030, INV-040]
+  supersedes: null
+  summary: >-
+    Enrollment can now read photos as well as capture from the camera. `lumina_enroll` accepts
+    --image FILE (repeatable) and/or --images-dir DIR, plus the existing --camera mode (compiled
+    only when LUMINA_ENABLE_LIBCAMERA is set). Added FaceEmbedder::embedFromImageFile (cv::imread,
+    native then downscaled retry) sharing one BGR detection/alignment helper with the frame path;
+    added the pure vision/image_list.{hpp,cpp} directory scanner (host-tested); linked OpenCV
+    imgcodecs; and made lumina_enroll build with LUMINA_ENABLE_FACE alone.
+  rationale: >-
+    The operator has still photos of the three people to enroll; enrolling from photos removes the
+    need to have the people present and matches FR-04 ("captures several frames per person"). Both
+    entry points share the exact YuNet/SFace code so embeddings are consistent. Photos stay on the
+    device and are not copied (FR-03.4).
+  files:
+    - Lumina-BETA-RPI-2W/src/vision/face.hpp
+    - Lumina-BETA-RPI-2W/src/vision/face.cpp
+    - Lumina-BETA-RPI-2W/src/vision/image_list.hpp
+    - Lumina-BETA-RPI-2W/src/vision/image_list.cpp
+    - Lumina-BETA-RPI-2W/src/tools/enroll_face.cpp
+    - Lumina-BETA-RPI-2W/scripts/enroll_face.sh
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/test_image_list.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/models/face/README.md
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    On the Pi: copy 3-5 photos per person to ~/lumina/photos/, run scripts/enroll_face.sh once per
+    person, then verify greetings and FPS/RSS; record results in docs/PERFORMANCE.md.
+
+# ---------------------------------------------------------------------------
+# CHG-0068 — Day 4: correct FaceGreeter test expectations; drop ignored nodiscard
+# ---------------------------------------------------------------------------
+- id: CHG-0068
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: test
+  status: applied
+  invariants: [INV-030, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed three FaceGreeter test cases whose expectations contradicted the policy: with
+    stableFrames=3 the 3rd consecutive observation IS announced, but the tests asserted it was
+    not. Every observe() call is now wrapped in CHECK/CHECK_FALSE/REQUIRE (removing the
+    -Wunused-result warnings). In pipeline.cpp the intentional "person left" reset now calls
+    FaceGreeter::reset() instead of observe(nullopt), which is equivalent and warning-free.
+  rationale: >-
+    The production code was correct (the first greeter test, which asserts announce-on-3rd, passed).
+    The failing tests were wrong. Wrapping every [[nodiscard]] return matches the repo convention in
+    test_arbiter.cpp and keeps the build warning-free (AGENTS section 6/11). reset() and
+    observe(nullopt) both clear the candidate + count, so behavior is unchanged.
+  files:
+    - Lumina-BETA-RPI-2W/tests/test_face_greeter.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: Re-run the host suite; expect 98/98 green and no warnings.
+
+# ---------------------------------------------------------------------------
+# CHG-0069 — Day 4: fix aarch64 face link (isolate imgcodecs; sysroot BLAS/GDAL)
+# ---------------------------------------------------------------------------
+- id: CHG-0069
+  date: 2026-09-18
+  agent: opencode/deepseek-flash
+  type: fix
+  status: applied
+  invariants: [INV-021, INV-022, INV-025, INV-052]
+  supersedes: null
+  summary: >-
+    Fixed the aarch64 link failure for the face path. Root cause: Debian's
+    libopencv_core needs liblapack.so.3/libblas.so.3, whose top-level sysroot names are
+    dangling /etc/alternatives symlinks (the real files are under usr/lib/.../blas and
+    /lapack), and libopencv_imgcodecs needs libgdal -> libarmadillo.so.14, which the
+    synced sysroot does not contain. Changes: (1) lumina_core links only
+    core/imgproc/objdetect; imgcodecs is linked solely by lumina_enroll, so the runtime
+    and benchmarks never pull GDAL/armadillo (also saves RAM, INV-052). (2) face.hpp/cpp
+    replace embedFromImageFile(path) with embedBgrImage(pixels,w,h,stride); the tool does
+    cv::imread + downscale and passes a BGR buffer. (3) CMake adds -rpath-link to the
+    blas/ and lapack/ subdirs and -Wl,--allow-shlib-undefined on lumina_core (PUBLIC) so
+    the missing transitive libs are deferred to runtime, where the Pi has them.
+  rationale: >-
+    The sysroot is partial (dangling alternatives symlinks + no armadillo); the agent must
+    not modify cmake/rpi-sysroot, and the Pi has the full OpenCV dependency set. Isolating
+    imgcodecs also avoids loading the 27 MB libgdal into the 512 MB runtime. Deferring
+    unresolved shared-library symbols to runtime is acceptable because the deployment
+    target is complete.
+  files:
+    - Lumina-BETA-RPI-2W/src/vision/face.hpp
+    - Lumina-BETA-RPI-2W/src/vision/face.cpp
+    - Lumina-BETA-RPI-2W/src/tools/enroll_face.cpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/docs/CROSS_COMPILE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild aarch64. If a proper fix is preferred, re-sync the sysroot with the blas/lapack
+    alternatives resolved and libarmadillo included (scripts/1_sync_sysroot.sh), then the
+    linker flags can be removed.
+
+# ---------------------------------------------------------------------------
+# CHG-0070 — Day 4: fix camera timeout by downscaling face detection (memory)
+# ---------------------------------------------------------------------------
+- id: CHG-0070
+  date: 2026-09-20
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-031, INV-050, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed the on-device camera timeout during face recognition. Root cause: the Zero 2 W exposes
+    only ~415 MB usable RAM; running YuNet at the full 640x480 frame churned tens of MB of DNN
+    workspace per inference, pushing the system to ~26 MB available with ~149 MB SD swap, whose
+    stall made libcamera miss its V4L2 dequeue ("Camera frontend has timed out"). An A/B test
+    confirmed it: with no enrolled people (identify() returns immediately) the camera was stable at
+    4.2 FPS / RSS 201 MB; with faces active it collapsed (RSS 260 -> 69 MB, camera timeout). Fix:
+    add core::Config.faceDetectionSide (default 320, clamp 160-640), map it to
+    FaceModelConfig.detectionSide, and downscale the frame to that longest side before YuNet in
+    embedLargestFace; add a DEBUG "face: identify WxH took X ms" line. Documented optional system
+    tuning (gpu_mem split, zram swap) and fallbacks in docs/PERFORMANCE.md section 12.
+  rationale: >-
+    The trigger was memory pressure/swap, not CPU or heat (temp 52 C, no throttle). YuNet's native
+    input is 320x320; at 640x480 its transient workspace is ~4x larger. Downscaling keeps the face
+    pipeline (detect + alignCrop + feature) on one consistent image and cuts the transient ~4x,
+    restoring headroom so the camera ISP is not starved. 320 px still yields a face well within
+    YuNet's reliable range for a person covering >= faceMinBoxFraction (4% of the frame).
+  files:
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/vision/face.hpp
+    - Lumina-BETA-RPI-2W/src/vision/face.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild/deploy and re-measure with a person present: expect steady RSS (~210-220 MB), no swap
+    growth, camera stable, and "face: identify 320x240 took X ms" < ~150 ms. If swap still appears,
+    lower faceDetectionSide to 256, raise faceIntervalMs, or reduce NCNN threads to 3; consider
+    gpu_mem/zram. Record in docs/PERFORMANCE.md.
 ```

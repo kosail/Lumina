@@ -217,7 +217,8 @@ Day 1-2: vertical slice camera -> NCNN -> Piper ES -> bluealsa buds.
          *** GO/NO-GO GATE ***  (if fail: fallback = hardened Python nightly for demo)
 Day 3:   alert arbiter (priority/preemption/cooldown) + i18n + class labels.
          *** DONE 2026-09-18 (CHG-0044..0058); see docs/PERFORMANCE.md section 11 ***
-Day 4:   face enroll + recognition (YuNet + embedder), ROI crop, threshold tuning. (NOT STARTED)
+Day 4:   face enroll + recognition (YuNet + embedder), ROI crop, threshold tuning.
+         *** IMPLEMENTED 2026-09-18 (CHG-0059..0065); on-device verification pending ***
 Day 5:   BT autoconnect at boot, thermal/power soak, end-to-end demo script.
 Day 6:   optional UDP telemetry ONLY if all green; else buffer/fallback.
 Post-Day-4 (optional, Phase C): front VL53L0X proximity alert if the core is green.
@@ -281,15 +282,19 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
    speech thread), vendor cancellation into libpiper, or add an IR-only immediate tone. See
    docs/PERFORMANCE.md known limitations. A dual-voice fallback (claude-high warmed / ald-xlow
    misses) was measured (~3.4x faster misses, ~40 MB) but is deferred (CHG-0057).
-7. Day 4 (face recognition) PREREQUISITES — not started. To prepare before coding:
-   - Models: fetch YuNet (`face_detection_yunet_*.onnx`, ~0.34 MB) and SFace
-     (`face_recognition_sface_*.onnx`, ~37 MB) from the OpenCV Zoo into `models/face/` (no fetch
-     script exists yet; `scripts/3-export_models.sh` only exports YOLO). MobileFaceNet on NCNN
-     (~4 MB) is the low-RAM alternative (INV-052).
-   - Code: `vision/face.{hpp,cpp}` + `vision/face_store.{hpp,cpp}` behind `IFaceRecognizer`
-     (INV-030); enroll 3-4 people (FR-03/FR-04); on-demand/low-rate face worker so detection FPS
-     is not regressed (INV-031/INV-050).
-   - Script: `scripts/enroll_face.sh` (referenced in AGENTS section 4 / README but does not exist).
-   - i18n: Spanish greeting phrases (e.g. "Hola, <nombre>."), pre-warmed into the phrase cache.
-   - Config/tests: stable-frames + conservative match threshold (INV-041), mocks + unit tests,
-     on-device enrollment/recognition checklist.
+7. Day 4 (face recognition) — IMPLEMENTED (CHG-0059..0067); on-device verification pending.
+   Decisions locked: SFace fp32 + YuNet 2023mar (OpenCV 4.10); cosine threshold 0.363 + best-vs-
+   second margin 0.05; 3 stable frames + 30 s/person cooldown; `lumina_enroll` from photos
+   (recommended) or live camera, up to K=10 embeddings/person; store `models/face/embeddings.bin`;
+   dedicated low-rate face worker thread (single-slot queues) so detection FPS is not regressed
+   (INV-031/INV-050); greeting "<nombre> está enfrente" (Description priority, non-preempting,
+   pre-warmed per enrolled name).
+   - Models: `scripts/8-fetch_face_models.sh` -> `models/face/{yunet,sface}.onnx` (SHA-256 pinned).
+   - Code: `vision/face.{hpp,cpp}` (OpenCV) + `vision/face_store.{hpp,cpp}` +
+     `vision/image_list.{hpp,cpp}` + `app/face_greeter.*` behind `IFaceRecognizer` (INV-030);
+     `Alert.preStabilized` lets a one-shot greeting bypass the arbiter's description stability
+     counter.
+   - Script: `scripts/enroll_face.sh` (+ `src/tools/enroll_face.cpp`); `--image`/`--images-dir`
+     for photos, `--camera` for live capture (needs LUMINA_ENABLE_LIBCAMERA).
+   - Verify on-device: enroll 3 people, greet by name, reject non-enrolled, measure FPS/RSS.
+   - Deferred fallback if RAM pressure (INV-052): int8bq SFace or MobileFaceNet-on-NCNN.

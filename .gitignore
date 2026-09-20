@@ -26,7 +26,8 @@ CMakeUserPresets.json
 /models/**/*.bin
 /models/**/*.pt
 /models/**/*.tflite
-
+/models/**/*.LICENSE
+/models/**/README*
 # Compiled objects and libraries.
 *.o
 *.a

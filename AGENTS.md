@@ -111,7 +111,7 @@ Lumina-BETA-RPI-2W/
     app/                     # pipeline orchestrator + Spanish describer
     i18n/                    # es message catalog
     telemetry/               # udp (optional, off by default)
-  scripts/                   # 1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, enroll_face.sh, bt_setup.sh
+  scripts/                   # 1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, 7-setup_i2c.sh, 8-fetch_face_models.sh, enroll_face.sh, bt_setup.sh
   tests/                     # doctest unit tests + bench targets
   docs/                      # design notes (CROSS_COMPILE.md, PERFORMANCE.md)
 ```
@@ -329,6 +329,13 @@ scripts/6-fetch_voices.sh
 
 # On-device: enable I2C and print the proximity wiring/address plan (Phase B)
 scripts/7-setup_i2c.sh          # prints pin map; see docs/PROXIMITY.md for the guided walkthrough
+
+# One-time: fetch the YuNet + SFace face models -> models/face (sha256-verified)
+scripts/8-fetch_face_models.sh
+
+# On-device: enroll one named person (needs LUMINA_ENABLE_FACE=ON)
+scripts/enroll_face.sh "María" photos/Maria   # photos (recommended), or:
+scripts/enroll_face.sh "Ana" --camera         # live camera (needs LIBCAMERA)
 
 # On-device benchmarks (need LUMINA_ENABLE_NCNN=ON + LUMINA_BUILD_BENCH=ON)
 build/aarch64/tests/lumina_bench_fps <modelDir> <inputWidth> <inputHeight> [iterations] [--threads N]

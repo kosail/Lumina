@@ -42,6 +42,9 @@ option(LUMINA_ENABLE_NCNN "Build the NCNN detector path" OFF)                  #
 # The Piper TTS + ALSA/bluealsa audio path needs libpiper (third_party/libpiper)
 # and libasound from the sysroot; OFF by default so host builds link neither.
 option(LUMINA_ENABLE_AUDIO "Build the Piper TTS + ALSA/bluealsa audio path" OFF) # INV-022, INV-060
+# The OpenCV face path (YuNet + SFace) needs OpenCV 4.10 from the target sysroot;
+# OFF by default so the host/mock build links no OpenCV (INV-025, FR-03).
+option(LUMINA_ENABLE_FACE "Build the OpenCV face recognition path" OFF)
 
 # Tests default ON so the laptop build exercises pure logic (AGENTS.md §9); the
 # aarch64 preset turns them OFF. Benchmarks run on the Pi and default OFF.
@@ -62,10 +65,13 @@ add_library(lumina_core STATIC
     src/core/logging.cpp
     src/i18n/es.cpp
     src/vision/yolo11_decode.cpp
+    src/vision/face_store.cpp
+    src/vision/image_list.cpp
     src/processing/distance.cpp
     src/alerts/arbiter.cpp
     src/app/scene.cpp
     src/app/describer.cpp
+    src/app/face_greeter.cpp
     src/app/pipeline.cpp
     src/audio/caching_tts.cpp)  # describer/pipeline/caching_tts use interfaces only -> host-buildable
 
@@ -148,6 +154,38 @@ if(LUMINA_ENABLE_AUDIO)
 endif()
 
 # ---------------------------------------------------------------------------
+# Optional OpenCV face recognition path (FR-03, INV-025). OpenCV 4.10 comes from
+# the target sysroot; the Debian OpenCV config self-locates relative to its
+# cmake/opencv4 directory, so pointing OpenCV_DIR at it keeps the whole
+# resolution inside cmake/rpi-sysroot and never touches a host OpenCV install.
+# ---------------------------------------------------------------------------
+if(LUMINA_ENABLE_FACE)
+    if(NOT DEFINED OpenCV_DIR AND DEFINED LUMINA_SYSROOT AND NOT LUMINA_SYSROOT STREQUAL "")
+        set(OpenCV_DIR "${LUMINA_SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/opencv4"
+            CACHE PATH "OpenCV CMake config directory (inside the sysroot)")
+    endif()
+    # Only the modules the runtime needs. imgcodecs (photo decoding) is linked
+    # only by lumina_enroll below, so the runtime never pulls its heavy GDAL
+    # dependency (which would also waste RAM, INV-052).
+    find_package(OpenCV 4.10 REQUIRED COMPONENTS core imgproc objdetect imgcodecs)
+    target_sources(lumina_core PRIVATE src/vision/face.cpp)
+    target_link_libraries(lumina_core PUBLIC opencv_core opencv_imgproc opencv_objdetect)
+    target_compile_definitions(lumina_core PUBLIC LUMINA_HAS_FACE=1)
+    # Debian's libopencv_core needs liblapack.so.3/libblas.so.3. In the synced
+    # sysroot the top-level names are dangling /etc/alternatives symlinks; the real
+    # files live under blas/ and lapack/, so point the linker at them. The synced
+    # sysroot is also missing a few transitive libraries (e.g. libarmadillo pulled
+    # by GDAL); --allow-shlib-undefined defers those to runtime, where the Pi has
+    # the full set. This affects every face target, so it lives on lumina_core.
+    if(DEFINED LUMINA_SYSROOT AND NOT LUMINA_SYSROOT STREQUAL "")
+        target_link_options(lumina_core PUBLIC
+            "-Wl,-rpath-link,${LUMINA_SYSROOT}/usr/lib/aarch64-linux-gnu/blas"
+            "-Wl,-rpath-link,${LUMINA_SYSROOT}/usr/lib/aarch64-linux-gnu/lapack"
+            "-Wl,--allow-shlib-undefined")
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # Executable. The binary is named `lumina` to match the documented output path
 # build/<preset>/lumina (AGENTS.md §9, RAW_PLAN.md §8).
 # ---------------------------------------------------------------------------
@@ -160,6 +198,16 @@ target_link_libraries(lumina PRIVATE lumina_core)
 if(LUMINA_ENABLE_LIBCAMERA)
     add_executable(lumina_capture_test src/tools/capture_probe.cpp)
     target_link_libraries(lumina_capture_test PRIVATE lumina_core)
+endif()
+
+# Face enrollment tool (FR-04). Needs the face path; camera capture inside the
+# tool is optional (compiled only when LIBCAMERA is also enabled), so it can
+# enroll from photos on any FACE-enabled build.
+if(LUMINA_ENABLE_FACE)
+    add_executable(lumina_enroll src/tools/enroll_face.cpp)
+    # Photo decoding needs imgcodecs; the runtime itself stays codec-free (the
+    # GDAL/armadillo link quirk is handled by lumina_core's link options above).
+    target_link_libraries(lumina_enroll PRIVATE lumina_core opencv_imgcodecs)
 endif()
 
 # ---------------------------------------------------------------------------

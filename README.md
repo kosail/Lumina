@@ -134,6 +134,7 @@ Model files are not committed. Export/download them with:
 scripts/3-export_models.sh      # YOLO11n -> NCNN (320x256 + comparison sizes)
 scripts/4-fetch_onnxruntime.sh  # official prebuilt ONNX Runtime (aarch64) for libpiper
 scripts/6-fetch_voices.sh       # pinned es_MX Piper voice (Spanish TTS)
+scripts/8-fetch_face_models.sh  # YuNet + SFace face models (OpenCV, SHA-256 pinned)
 ```
 
 ## Configuration
@@ -148,6 +149,7 @@ Compile-time options (defaults shown):
 | `LUMINA_ENABLE_LIBCAMERA` | `OFF` | Build the libcamera capture path |
 | `LUMINA_ENABLE_NCNN` | `OFF` | Build the NCNN detector path |
 | `LUMINA_ENABLE_AUDIO` | `OFF` | Build the Piper TTS + ALSA/bluealsa path |
+| `LUMINA_ENABLE_FACE` | `OFF` | Build the OpenCV face recognition path (YuNet + SFace) |
 | `LUMINA_ENABLE_PROXIMITY` | `OFF` | Build the VL53L0X proximity path (`ON` in the aarch64 preset) |
 | `LUMINA_ENABLE_TELEMETRY` | `OFF` | Build the optional UDP telemetry path |
 
@@ -167,6 +169,13 @@ Runtime environment variables (all optional):
 | `PIPER_NUM_THREADS` | Piper/ONNX Runtime intra-op threads (default 3) |
 | `LUMINA_PHRASE_CACHE_DIR` | On-disk TTS phrase cache directory (default `$HOME/.cache/lumina/phrase-cache`) |
 
+### Memory on the Pi Zero 2 W
+
+The board exposes only ~415 MB usable RAM. Face detection is downscaled to `faceDetectionSide`
+(default 320) to avoid SD swap; see `docs/PERFORMANCE.md` §12. If the system still swaps under load,
+lower the GPU split (`gpu_mem=64` in `/boot/firmware/config.txt`) and/or use **zram** instead of SD
+swap — both free headroom for the camera and speech pipeline.
+
 ## Testing and benchmarks
 
 - Unit tests (host, mocks only): `ctest --preset host`
@@ -177,10 +186,32 @@ Runtime environment variables (all optional):
 
 1. Runtime skeleton, capture, detector, TTS-to-Bluetooth vertical slice (Day-2 gate). — **done**
 2. Alert arbiter + Spanish alert catalog (Day 3). — **done** (see `docs/PERFORMANCE.md` §11)
-3. Face enrollment and recognition (Day 4). — **not started**
+3. Face enrollment and recognition (Day 4). — **implemented; on-device verification pending**
 4. Boot-time Bluetooth autoconnect, soak testing, demo hardening.
 5. Optional UDP telemetry (only after everything else passes).
 6. Front VL53L0X proximity alert once the core is green; rear sensor deferred to the very end (`docs/PROXIMITY.md`).
+
+## Face enrollment (FR-04)
+
+Build with the face path and enroll each person on the Pi (one named person per run).
+Enrollment accepts **photos** (recommended) or the **live camera**:
+
+```bash
+# Cross-build with the face path (add LIBCAMERA only if you want --camera)
+cmake --preset aarch64 -DLUMINA_ENABLE_FACE=ON -DLUMINA_ENABLE_NCNN=ON \
+      -DLUMINA_ENABLE_AUDIO=ON -DLUMINA_ENABLE_LIBCAMERA=ON
+cmake --build --preset aarch64
+
+# On the Pi, from the deploy dir (~/lumina), one run per person:
+scripts/enroll_face.sh "María" photos/Maria        # all photos in a folder
+scripts/enroll_face.sh "Juan"  juan1.jpg juan2.jpg # explicit photo files
+scripts/enroll_face.sh "Ana"   --camera            # live camera capture
+```
+
+Enrollment writes `models/face/embeddings.bin` (up to 10 embeddings per person) and
+reloads automatically on the next boot. Embeddings and photos stay on the device
+(FR-03.4). For best results give each person **3–5 varied, front-facing, well-lit
+photos**. The runtime greets a recognized person with "<nombre> está enfrente".
 
 ## License and third-party notices
 

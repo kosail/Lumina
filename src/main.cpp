@@ -34,7 +34,12 @@
 #include "audio/piper_tts.hpp"
 #include "capture/libcamera_source.hpp"
 #include "core/logging.hpp"
+#include "vision/face_recognizer.hpp"
 #include "vision/ncnn_detector.hpp"
+
+#if defined(LUMINA_HAS_FACE)
+#include "vision/face.hpp"  // OpenCV implementation; only compiled when enabled
+#endif
 
 namespace {
 
@@ -122,6 +127,27 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Face recognition (FR-03) is optional: it needs OpenCV (LUMINA_HAS_FACE) and
+    // a fetched/enrolled store. When unavailable the pipeline runs without it, so
+    // a partial build never fails to start.
+    lumina::vision::IFaceRecognizer* faceRecognizer = nullptr;
+#if defined(LUMINA_HAS_FACE)
+    lumina::vision::FaceModelConfig faceConfig;  // defaults: models/face/{yunet,sface}.onnx
+    // core::Config is the single source of truth for the runtime face tuning, so
+    // the approved threshold/margin/ROI actually take effect (they were otherwise
+    // ignored in favor of the FaceModelConfig defaults).
+    faceConfig.matchThreshold = config.faceMatchThreshold;
+    faceConfig.matchMargin = config.faceMatchMargin;
+    faceConfig.roiFraction = config.faceRoiFraction;
+    faceConfig.detectionSide = config.faceDetectionSide;
+    lumina::vision::FaceRecognizer faceRecognizerImpl(faceConfig);
+    if (faceRecognizerImpl.load()) {
+        faceRecognizer = &faceRecognizerImpl;
+    } else {
+        LUMINA_LOG_WARN("face recognition unavailable; continuing without it");
+    }
+#endif
+
     // Wrap Piper in the on-disk phrase cache so the fixed narration phrases play
     // with near-zero latency (INV-051). Warm before the pipeline starts.
     lumina::audio::PhraseCacheConfig cacheConfig;
@@ -141,6 +167,15 @@ int main(int argc, char** argv)
     warmPhrases.insert(warmPhrases.end(), pairPhrases.begin(), pairPhrases.end());
     const std::vector<std::string> alertPhrases = lumina::app::alertPhraseCatalog();
     warmPhrases.insert(warmPhrases.end(), alertPhrases.begin(), alertPhrases.end());
+#if defined(LUMINA_HAS_FACE)
+    // Pre-warm a greeting for every enrolled person so recognition can speak
+    // instantly ("<nombre> está enfrente"), not lazily mid-demo (INV-051).
+    if (faceRecognizer != nullptr) {
+        for (const std::string& name : faceRecognizerImpl.store().names()) {
+            warmPhrases.push_back(lumina::i18n::greeting(name));
+        }
+    }
+#endif
     const std::size_t rendered = tts.warm(warmPhrases);
     LUMINA_LOG_INFO("phrase cache: {} new phrase(s) rendered into '{}'",
                     rendered,
@@ -149,7 +184,8 @@ int main(int argc, char** argv)
     lumina::audio::AlsaConfig alsaConfig; // defaults to the bluealsa PCM
     lumina::audio::AlsaSink sink(alsaConfig);
 
-    lumina::app::Pipeline pipeline(&camera, &detector, &tts, &sink, config);
+    lumina::app::Pipeline pipeline(&camera, &detector, &tts, &sink, config,
+                                   lumina::app::PipelineConfig{}, faceRecognizer);
     if (!pipeline.start()) {
         LUMINA_LOG_ERROR("pipeline failed to start");
         return 1;

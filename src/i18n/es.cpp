@@ -155,4 +155,12 @@ const char* proximityAlertPhrase(bool veryClose) noexcept {
     return veryClose ? "cuidado, obstáculo cerca." : "obstáculo cerca.";
 }
 
+std::string greeting(std::string_view name) {
+    // Approved wording: "{NAME} está enfrente". No leading "Hola" and no trailing
+    // punctuation (the TTS adds its own prosody at the end of an utterance).
+    std::string phrase(name);
+    phrase += " está enfrente";
+    return phrase;
+}
+
 }  // namespace lumina::i18n

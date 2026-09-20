@@ -52,6 +52,11 @@ struct Alert {
     // Capture time of the frame that produced the alert, so the speech worker can
     // report event->audible latency (INV-051).
     core::TimePoint detectedAt{};
+    // True when this alert was already stabilized by its producer and must not be
+    // held back by the arbiter's scene-description stability counter. Face
+    // greetings (FR-03) are one-shot events with their own stability + cooldown
+    // upstream, so they set this instead of relying on consecutive-frame counting.
+    bool preStabilized = false;
 };
 
 } // namespace lumina::alerts

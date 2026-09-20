@@ -15,10 +15,14 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
+#include <optional>
 #include <thread>
+#include <vector>
 
 #include "alerts/arbiter.hpp"
+#include "app/face_greeter.hpp"
 #include "audio/audio_sink.hpp"
 #include "audio/tts_engine.hpp"
 #include "capture/camera.hpp"
@@ -26,6 +30,7 @@
 #include "core/config.hpp"
 #include "core/frame.hpp"
 #include "vision/detector.hpp"
+#include "vision/face_recognizer.hpp"
 
 namespace lumina::app {
 
@@ -44,7 +49,8 @@ public:
              audio::ITtsEngine* tts,
              audio::IAudioSink* sink,
              core::Config config,
-             PipelineConfig pipelineConfig = {});
+             PipelineConfig pipelineConfig = {},
+             vision::IFaceRecognizer* faceRecognizer = nullptr);
 
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
@@ -58,26 +64,51 @@ public:
     void stop() noexcept;
 
 private:
+    // One face-recognition request: a frame plus the person box that triggered it.
+    struct FaceWork {
+        core::Frame frame;
+        core::Detection person;
+        core::TimePoint capturedAt{};
+    };
+
+    // One face-recognition answer, handed back to the inference thread.
+    struct FaceResult {
+        std::optional<vision::FaceMatch> match;
+        core::TimePoint capturedAt{};
+    };
+
     void captureLoop(std::stop_token stopToken);
     void inferenceLoop(std::stop_token stopToken);
     void speechLoop(std::stop_token stopToken);
+    void faceLoop(std::stop_token stopToken);
+
+    // Decide whether to dispatch `frame` to the face thread and drain any finished
+    // result into the greeting policy. Called from the inference thread.
+    void driveFaceRecognition(core::Frame frame, const std::vector<core::Detection>& detections);
 
     // Non-owning dependencies (injected; must outlive the Pipeline).
     capture::ICamera* m_camera = nullptr;
     vision::IDetector* m_detector = nullptr;
     audio::ITtsEngine* m_tts = nullptr;
     audio::IAudioSink* m_sink = nullptr;
+    vision::IFaceRecognizer* m_faceRecognizer = nullptr; // may be null (host / disabled)
 
     core::Config m_config;
+    FaceGreeter m_faceGreeter; // greeting policy (stability + cooldown)
 
-    core::BoundedQueue<core::Frame> m_frames; // capture -> inference
-    alerts::AlertArbiter m_arbiter;           // inference -> speech (priority + preemption)
+    core::BoundedQueue<core::Frame> m_frames;    // capture -> inference
+    alerts::AlertArbiter m_arbiter;              // inference -> speech (priority + preemption)
+    core::BoundedQueue<FaceWork> m_faceFrames;   // inference -> face (single slot)
+    core::BoundedQueue<FaceResult> m_faceResults; // face -> inference (single slot)
+
+    core::TimePoint m_lastFaceAttempt{}; // throttles face dispatch (faceIntervalMs)
 
     std::atomic<bool> m_running{false}; // guards start()/stop() idempotency
 
     std::jthread m_captureThread;
     std::jthread m_inferenceThread;
     std::jthread m_speechThread;
+    std::jthread m_faceThread;
 };
 
 } // namespace lumina::app

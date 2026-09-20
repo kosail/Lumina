@@ -308,6 +308,8 @@ compiler probe also succeeds). **Do not remove them.** This is recorded as `CHG-
 | `cmake --preset aarch64` fails at the compiler probe | Sysroot missing/broken; run `scripts/1-sync_sysroot.sh --check`. |
 | `Host key verification failed` | First connection to the Pi; run `ssh pi@<pi-host>` once to accept the key. |
 | `scripts/1-sync_sysroot.sh: bad substitution` / `[[` errors | Run it with `bash`, not `sh` (it uses bash arrays). |
+| `liblapack.so.3` / `libblas.so.3` "not found" when linking the face path | Debian keeps the real files under `usr/lib/aarch64-linux-gnu/{blas,lapack}/`; the top-level names are `/etc/alternatives` symlinks that a sysroot sync does not resolve. `CMakeLists.txt` adds `-Wl,-rpath-link` to those subdirs. See CHG-0069. |
+| `libarmadillo.so.14` "not found" / undefined `wrapper2_*` from `libgdal` | `libopencv_imgcodecs` needs GDAL, which needs Armadillo (absent from the synced sysroot). The runtime avoids `imgcodecs`; the enrollment tool tolerates it with `-Wl,--allow-shlib-undefined` (the Pi has the real libs). See CHG-0069. |
 
 ## C4. Related
 

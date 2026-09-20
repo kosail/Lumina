@@ -46,7 +46,27 @@ struct Config {
     // narrated but do not raise obstacle alerts.
     std::vector<int> obstacleClassIds{0, 1, 2, 5, 56, 57, 60};
     int faceStableFrames = 3;                         // frames before announcing a name
-    float faceMatchThreshold = 0.50F;                 // embedding cosine similarity cutoff
+    // SFace cosine-similarity cutoff. The OpenCV Zoo reference uses 0.363 (cosine);
+    // the old 0.50 was stricter and risked rejecting real users (FR-03.2).
+    float faceMatchThreshold = 0.363F;
+    float faceMatchMargin = 0.05F;                    // best must beat 2nd-best by this
+    // Whether the face path runs at all (independent of whether a recognizer was
+    // injected; both must be true for recognition to happen).
+    bool faceEnabled = true;
+    int faceIntervalMs = 500;                         // min gap between face attempts
+    int faceGreetingCooldownMs = 30000;               // per-person re-greet cooldown
+    // A person must cover at least this fraction of the frame (box area / frame
+    // area) before we attempt recognition, so distant faces are not probed.
+    float faceMinBoxFraction = 0.04F;
+    // Central-crop fraction used by the OpenCV face path (INV-011): 1.0 = full
+    // frame; smaller values trim the distorted lens edges.
+    float faceRoiFraction = 1.0F;
+    // Longest side (px) fed to YuNet. The 640x480 frame is downscaled to this
+    // before detection: YuNet's native size is 320, and at 640x480 its DNN
+    // workspace churns tens of MB per inference, which forces SD swap on the
+    // 415 MB Pi and starves the camera (INV-052, CHG-0070). 320 keeps faces in
+    // YuNet's reliable range for a person covering >= faceMinBoxFraction.
+    int faceDetectionSide = 320;
 };
 
 // The approved detection input sizes (width x height), in preference order. The
@@ -75,7 +95,18 @@ struct Config {
     config.pathCenterTolerance = std::clamp(config.pathCenterTolerance, 0.0F, 1.0F);
     config.maxNarratedItems = std::clamp(config.maxNarratedItems, 1, 3);
     config.faceStableFrames = std::clamp(config.faceStableFrames, 1, 30);
+    // A 0 ms interval would attempt face recognition every frame and could starve
+    // the detector (INV-050), so enforce a sane floor (default is 500 ms).
+    config.faceIntervalMs = std::clamp(config.faceIntervalMs, 100, 60000);
+    // A 0 ms cooldown would greet a person continuously; floor at 1 s.
+    config.faceGreetingCooldownMs = std::clamp(config.faceGreetingCooldownMs, 1000, 3600000);
+    config.faceMinBoxFraction = std::clamp(config.faceMinBoxFraction, 0.0F, 1.0F);
+    // A face ROI below 0.1 would crop away almost everything; 1.0 is the full frame.
+    config.faceRoiFraction = std::clamp(config.faceRoiFraction, 0.1F, 1.0F);
+    // YuNet's usable range is small; clamp the detection side to a sane band.
+    config.faceDetectionSide = std::clamp(config.faceDetectionSide, 160, 640);
     config.faceMatchThreshold = std::clamp(config.faceMatchThreshold, 0.0F, 1.0F);
+    config.faceMatchMargin = std::clamp(config.faceMatchMargin, 0.0F, 1.0F);
     return config;
 }
 
@@ -90,7 +121,13 @@ struct Config {
            config.pathCenterTolerance >= 0.0F && config.pathCenterTolerance <= 1.0F &&
            config.maxNarratedItems >= 1 && config.maxNarratedItems <= 3 &&
            config.faceStableFrames >= 1 && config.faceStableFrames <= 30 &&
-           config.faceMatchThreshold >= 0.0F && config.faceMatchThreshold <= 1.0F;
+           config.faceIntervalMs >= 100 && config.faceIntervalMs <= 60000 &&
+           config.faceGreetingCooldownMs >= 1000 && config.faceGreetingCooldownMs <= 3600000 &&
+           config.faceMinBoxFraction >= 0.0F && config.faceMinBoxFraction <= 1.0F &&
+           config.faceRoiFraction >= 0.1F && config.faceRoiFraction <= 1.0F &&
+           config.faceDetectionSide >= 160 && config.faceDetectionSide <= 640 &&
+           config.faceMatchThreshold >= 0.0F && config.faceMatchThreshold <= 1.0F &&
+           config.faceMatchMargin >= 0.0F && config.faceMatchMargin <= 1.0F;
 }
 
 }  // namespace lumina::core

@@ -306,3 +306,52 @@ including a ~4.5‑minute soak, no libcamera error, no segfault.
 faster with `ald‑xlow` (~25.6k samples/s) than `claude‑high` (~7.5k samples/s), at ~40 MB less RSS.
 A two‑voice "claude for warmed phrases, ald for misses" fallback was measured as viable but is
 **deferred** (CHG‑0057) until the later‑stage live‑synthesis work.
+
+---
+
+## 12. Day‑4 face recognition (design; measurements pending)
+
+**Stack.** OpenCV 4.10 from the sysroot: YuNet (`face_detection_yunet_2023mar.onnx`, ~0.23 MB) for
+detection + SFace (`face_recognition_sface_2021dec.onnx`, ~37 MB) for embeddings, behind
+`IFaceRecognizer`. Models fetched by `scripts/8-fetch_face_models.sh` (SHA‑256 pinned, CHG‑0059).
+Build with `LUMINA_ENABLE_FACE=ON` (CHG‑0060).
+
+**Policy (approved, CHG‑0061/0063).**
+- Matching: cosine similarity, threshold **0.363** (OpenCV Zoo reference) + best‑vs‑second
+  **margin 0.05** to reject ambiguous near‑ties between enrolled people.
+- Greeting: **3 stable observations** + **30 s per‑person cooldown**; phrase
+  `"<nombre> está enfrente"`; Description priority (non‑preempting); pre‑warmed per enrolled name.
+- Store: `models/face/embeddings.bin`, up to **10 embeddings/person**, versioned + atomic (CHG‑0061).
+- Enrollment: `lumina_enroll` from **photos** (`--image`/`--images-dir`, recommended) or the live
+  **camera** (`--camera`), up to 10 samples/person (CHG‑0067).
+- Runtime: dedicated **low-rate face worker thread** (single-slot queues, `faceIntervalMs=500`),
+  `cv::setNumThreads(1)` so OpenCV does not oversubscribe the 4 cores NCNN uses (CHG‑0062/0065).
+- Detection input: the 640×480 frame is downscaled to **`faceDetectionSide` (default 320)** before
+  YuNet, because at full size YuNet's DNN workspace churned tens of MB per inference and forced SD
+  swap (CHG‑0070).
+
+**Memory pressure on the 415 MB board (CHG‑0070).** The Zero 2 W exposes only ~415 MB usable RAM
+(GPU/firmware reserve ~97 MB). Idle ≈124 MB; lumina without face inference ≈201 MB RSS. Running
+YuNet at the full 640×480 pushed the system to ~388 MB used, **26 MB available, ~149 MB swap**, and
+the SD‑card swap stall made libcamera miss its 1 s V4L2 dequeue (`Camera frontend has timed out`).
+Mitigation: downscale the face input to `faceDetectionSide`. If headroom is still tight, also:
+
+- **Lower the GPU split** (headless): set `gpu_mem=64` (or lower) in `/boot/firmware/config.txt`
+  and reboot — frees tens of MB for the CPU side.
+- **Use zram instead of SD swap** (`zram-tools` / `dtoverlay`/systemd‑zram): compressed RAM swap is
+  far faster than SD, so a brief spike cannot stall the camera.
+- Raise `faceIntervalMs`, lower `faceDetectionSide` to 256, or reduce NCNN threads 4 → 3.
+- Larger change: smaller embedder (int8 SFace or MobileFaceNet‑on‑NCNN ~4 MB).
+
+**To measure on‑device (Phase I, pending):**
+| Metric | Baseline (Day 3) | Day‑4 target |
+|--------|------------------|--------------|
+| Inference FPS (faces on) | 4.1–4.8 | stay within the INV‑050 caveat (no worse than ~4.0) |
+| RSS (faces on) | 184–189 MB | steady, and no swap growth during a run |
+| `face: identify` cost | — | < ~150 ms at 320 px |
+| Enroll (per person) | — | up to 10 embeddings captured in one run |
+| Recognition | — | enrolled greeted by name; non‑enrolled not named |
+| Persistence | — | `embeddings.bin` reloads after reboot |
+
+**Fallbacks if RAM/FPS regress:** int8bq SFace (verify OpenCV 4.10 support first) → MobileFaceNet on
+NCNN (deferred). Record results here and append a CHANGELOG entry once measured.

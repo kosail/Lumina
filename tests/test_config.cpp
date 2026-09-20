@@ -92,8 +92,7 @@ TEST_CASE("clampConfig keeps maxNarratedItems in [1, 3]") {
     CHECK(isValid(defaultConfig())); // default (2) is valid
 }
 
-TEST_CASE("defaultConfig narrates the beta set and defers motorcycle/truck") {
-    const auto config = defaultConfig();
+TEST_CASE("defaultConfig narrates the beta set and defers motorcycle/truck") {    const auto config = defaultConfig();
     const auto& ids = config.classIds;
     const auto has = [&ids](int id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); };
 
@@ -120,4 +119,36 @@ TEST_CASE("defaultConfig narrates the beta set and defers motorcycle/truck") {
     CHECK_FALSE(isObstacle(15)); // cat is not an obstacle
     CHECK_FALSE(isObstacle(24)); // backpack is not an obstacle
     CHECK_FALSE(isObstacle(3));  // motorcycle is deferred
+}
+
+TEST_CASE("face defaults match the approved Day-4 values") {
+    const auto config = defaultConfig();
+    // SFace cosine cutoff per the OpenCV Zoo reference (sface.py, 2026-09-18).
+    CHECK(config.faceMatchThreshold == doctest::Approx(0.363F));
+    CHECK(config.faceMatchMargin == doctest::Approx(0.05F));
+    CHECK(config.faceStableFrames == 3);
+    CHECK(config.faceEnabled);
+    CHECK(config.faceIntervalMs == 500);
+    CHECK(config.faceGreetingCooldownMs == 30000);
+    CHECK(config.faceDetectionSide == 320);
+    CHECK(isValid(config));
+}
+
+TEST_CASE("clampConfig repairs out-of-range face fields") {
+    auto config = defaultConfig();
+    config.faceMatchThreshold = 5.0F;   // above [0,1]
+    config.faceMatchMargin = -1.0F;     // below [0,1]
+    config.faceRoiFraction = 0.0F;      // below [0.1,1]
+    config.faceIntervalMs = 0;          // below the 100 ms floor (INV-050)
+    config.faceGreetingCooldownMs = 0;  // below the 1 s floor
+    config.faceDetectionSide = 10;      // below the 160 px floor
+
+    const auto fixed = clampConfig(config);
+    CHECK(fixed.faceMatchThreshold == doctest::Approx(1.0F));
+    CHECK(fixed.faceMatchMargin == doctest::Approx(0.0F));
+    CHECK(fixed.faceRoiFraction == doctest::Approx(0.1F));
+    CHECK(fixed.faceIntervalMs == 100);
+    CHECK(fixed.faceGreetingCooldownMs == 1000);
+    CHECK(fixed.faceDetectionSide == 160);
+    CHECK(isValid(fixed));
 }

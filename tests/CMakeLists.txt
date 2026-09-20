@@ -25,6 +25,10 @@ if(LUMINA_BUILD_TESTS)
         test_arbiter.cpp
         test_scene.cpp
         test_pipeline.cpp
+        test_pipeline_face.cpp
+        test_face_store.cpp
+        test_face_greeter.cpp
+        test_image_list.cpp
         test_yolo11_decode.cpp
         test_describer.cpp
         test_caching_tts.cpp)

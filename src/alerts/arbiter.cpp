@@ -83,15 +83,20 @@ bool AlertArbiter::submit(Alert alert, core::TimePoint now)
     }
 
     // Stability: count consecutive frames with the same scene key. A changed key
-    // restarts the count, so a one-frame flicker never becomes an utterance.
-    if (alert.dedupKey == m_candidateKey) {
-        ++m_candidateCount;
-    } else {
-        m_candidateKey = alert.dedupKey;
-        m_candidateCount = 1;
-    }
-    if (m_candidateCount < stableFramesFor(alert.priority)) {
-        return false;
+    // restarts the count, so a one-frame flicker never becomes an utterance. A
+    // pre-stabilized alert (e.g. a face greeting) skips this entirely: its
+    // producer already applied its own stability policy, and it must not disturb
+    // the scene-description candidate state.
+    if (!alert.preStabilized) {
+        if (alert.dedupKey == m_candidateKey) {
+            ++m_candidateCount;
+        } else {
+            m_candidateKey = alert.dedupKey;
+            m_candidateCount = 1;
+        }
+        if (m_candidateCount < stableFramesFor(alert.priority)) {
+            return false;
+        }
     }
 
     const bool hasKey = !alert.dedupKey.empty();
