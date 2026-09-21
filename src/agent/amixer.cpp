@@ -4,7 +4,6 @@
 
 #include "agent/amixer.hpp"
 
-#include <cctype>
 #include <charconv>
 #include <cstddef>
 #include <string>
@@ -14,19 +13,6 @@
 #include "core/logging.hpp"
 
 namespace lumina::agent {
-
-namespace {
-
-// Skip ASCII whitespace.
-std::size_t skipSpace(std::string_view text, std::size_t index)
-{
-    while (index < text.size() && std::isspace(static_cast<unsigned char>(text[index])) != 0) {
-        ++index;
-    }
-    return index;
-}
-
-}  // namespace
 
 std::vector<std::string> parseAmixerControls(std::string_view output)
 {

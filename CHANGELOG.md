@@ -3036,4 +3036,65 @@
     enrollment routes with progress and runtime restart, and people.list. Then quantify the
     hotspot (AP) vs A2DP cost in docs/PERFORMANCE.md. Status stays `proposed` until the build and
     on-device checks pass.
+
+# ---------------------------------------------------------------------------
+# CHG-0086 — Harden the companion agent: spawning, enrollment caps, telemetry delivery
+# ---------------------------------------------------------------------------
+- id: CHG-0086
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-003, INV-022, INV-030, INV-034, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Second-pass hardening of the FR-11 implementation found by review. (1) SystemCommandRunner now
+    uses posix_spawnp + file actions instead of fork()+execvp(): the agent is multithreaded and
+    execvp is not async-signal-safe, so the child could deadlock on a lock held at fork time; every
+    socket is now close-on-exec so children never inherit descriptors. (2) Enrollment frame counts
+    from the app are clamped to [1, enrollFrames] (new pure clampFrameCount) before any int cast.
+    (3) Image enrollment stages frames on disk (LUMINA_HOME/.cache/lumina/enroll, not /run tmpfs) and
+    enforces caps (12 images, 8 MiB total); an optional LUMINA_AGENT_ENROLL_STOP_RUNTIME stops the
+    runtime during image enrollment. (4) Agent::stop() cancels in-flight enrollment so shutdown does
+    not wait for the 60 s deadline. (5) Telemetry is now broadcast to a configurable subnet address
+    AND unicast to clients that send {"t":"subscribe"} on UDP 47600 (bounded to 8, 10 s TTL),
+    guaranteeing delivery when the app only reaches the gateway; TCP control binds a configurable
+    address (LUMINA_AGENT_BIND_ADDR, set to the hotspot gateway by the setup script). (6) volume.state
+    now reports ok; the token is trimmed and compared in constant time; env ports are validated; the
+    control line buffer is capped; findValue requires the key at object level; the pipeline publishes
+    a final running=0 snapshot on stop.
+  rationale: >-
+    Self-review of CHG-0085 surfaced a possible fork/exec deadlock, unbounded/unsafe enrollment
+    input, RAM-risky image staging, a broadcast-routing assumption, and several smaller robustness
+    gaps. All fixes keep the runtime network-free and the agent small (still links only
+    lumina_logging), and none change the invariants. The gateway insight (the app always talks to the
+    Pi) drives the design: control binds the gateway address and telemetry gains a unicast
+    subscription path that does not depend on broadcast reaching Wi-Fi clients.
+  files:
+    - Lumina-BETA-RPI-2W/src/agent/command_runner.cpp
+    - Lumina-BETA-RPI-2W/src/agent/control.hpp
+    - Lumina-BETA-RPI-2W/src/agent/control.cpp
+    - Lumina-BETA-RPI-2W/src/agent/udp.hpp
+    - Lumina-BETA-RPI-2W/src/agent/udp.cpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.hpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.cpp
+    - Lumina-BETA-RPI-2W/src/agent/enroll.hpp
+    - Lumina-BETA-RPI-2W/src/agent/enroll.cpp
+    - Lumina-BETA-RPI-2W/src/agent/main_agent.cpp
+    - Lumina-BETA-RPI-2W/src/agent/telemetry.cpp
+    - Lumina-BETA-RPI-2W/src/agent/json.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/scripts/lumina-agent.service
+    - Lumina-BETA-RPI-2W/scripts/10-setup_agent.sh
+    - Lumina-BETA-RPI-2W/docs/APP_PROTOCOL.md
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/tests/test_agent.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host (ctest) + aarch64 (expect zero warnings), then on-device: confirm the app receives
+    telemetry via subscribe (and broadcast via 10.42.0.255), volume.set/mute report ok, both enroll
+    routes clamp/stream/restart, runtime.start recovers after a forced failure, and image-enroll RSS
+    is acceptable (else enable LUMINA_AGENT_ENROLL_STOP_RUNTIME). CHG-0085 flips to applied after the
+    on-device checks.
 ```

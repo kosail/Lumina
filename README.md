@@ -207,6 +207,16 @@ architecture and operations: `docs/COMPANION.md`.
 scripts/10-setup_agent.sh --start   # /run/lumina + token + sudoers + lumina-agent.service
 ```
 
+Agent environment variables (set by the setup script / the unit):
+
+| Variable | Meaning |
+|----------|---------|
+| `LUMINA_HOME` | Directory holding `lumina`, `lumina_agent`, `models/`, `third_party/` |
+| `LUMINA_AGENT_BIND_ADDR` | Local address for TCP control (the hotspot gateway, e.g. `10.42.0.1`) |
+| `LUMINA_AGENT_BROADCAST` | Telemetry broadcast target (the hotspot subnet, e.g. `10.42.0.255`) |
+| `LUMINA_AGENT_ENROLL_STOP_RUNTIME` | `1` stops the runtime during image enrollment (frees RAM) |
+| `LUMINA_AGENT_TOKEN` | Overrides the token file (`$LUMINA_HOME/agent.token`) |
+
 ### Privacy / no network
 
 Lúmina performs **no cloud/network calls** (INV-003, INV-034). The one thing that would have

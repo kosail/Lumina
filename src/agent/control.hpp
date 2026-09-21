@@ -28,7 +28,10 @@ using RequestHandler = std::function<bool(const std::string& requestLine, const 
 // every connection thread, so destruction is always clean.
 class ControlServer {
 public:
-    ControlServer(int port, RequestHandler handler);
+    // `bindAddress` is the local IPv4 address to listen on ("0.0.0.0" = all). The
+    // setup script points it at the hotspot gateway so the app (which always talks
+    // to its gateway) reaches it without exposing the port on other networks.
+    ControlServer(int port, std::string bindAddress, RequestHandler handler);
     ~ControlServer();
     ControlServer(const ControlServer&) = delete;
     ControlServer& operator=(const ControlServer&) = delete;
@@ -44,6 +47,7 @@ private:
     void handleConnection(int clientFd);
 
     int m_port;
+    std::string m_bindAddress;
     RequestHandler m_handler;
     int m_listenFd = -1;
     std::atomic<bool> m_running{false};

@@ -10,7 +10,9 @@
 //   LUMINA_HOME=/home/lumina LUMINA_AGENT_TOKEN=... ./lumina_agent
 // ---------------------------------------------------------------------------
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -45,22 +47,47 @@ int envInt(const char* name, int fallback)
     if (value == nullptr || value[0] == '\0') {
         return fallback;
     }
-    return std::atoi(value);
+    char* end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed < 1 || parsed > 65535) {
+        LUMINA_LOG_WARN("agent: ignoring invalid {}='{}'; using {}", name, value, fallback);
+        return fallback;
+    }
+    return static_cast<int>(parsed);
+}
+
+bool envFlag(const char* name, bool fallback)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr || value[0] == '\0') {
+        return fallback;
+    }
+    const std::string text(value);
+    return text == "1" || text == "true" || text == "yes" || text == "on";
 }
 
 // The shared control token: LUMINA_AGENT_TOKEN wins, else $LUMINA_HOME/agent.token.
+// Surrounding whitespace is trimmed (a stray CR from an edited file would otherwise
+// break every request).
 std::string readToken(const std::string& home)
 {
-    if (const char* token = std::getenv("LUMINA_AGENT_TOKEN"); token != nullptr && token[0] != '\0') {
-        return token;
+    std::string token;
+    if (const char* env = std::getenv("LUMINA_AGENT_TOKEN"); env != nullptr && env[0] != '\0') {
+        token = env;
+    } else {
+        std::ifstream input(home + "/agent.token");
+        if (!input) {
+            return {};
+        }
+        std::getline(input, token);
     }
-    std::ifstream input(home + "/agent.token");
-    if (!input) {
+    const auto notSpace = [](unsigned char c) { return std::isspace(c) == 0; };
+    const auto begin = std::find_if(token.begin(), token.end(), notSpace);
+    const auto end = std::find_if(token.rbegin(), token.rend(), notSpace).base();
+    if (begin >= end) {
         return {};
     }
-    std::string token;
-    std::getline(input, token);
-    return token;
+    return std::string(begin, end);
 }
 
 void applyLogLevelFromEnv()
@@ -94,6 +121,12 @@ int main()
     config.controlPort = envInt("LUMINA_AGENT_TCP_PORT", config.controlPort);
     config.statusPath = envOr("LUMINA_STATUS_PATH", config.statusPath);
     config.token = readToken(home);
+    config.bindAddress = envOr("LUMINA_AGENT_BIND_ADDR", config.bindAddress);
+    config.broadcastAddress = envOr("LUMINA_AGENT_BROADCAST", config.broadcastAddress);
+    config.enrollImagesStopRuntime = envFlag("LUMINA_AGENT_ENROLL_STOP_RUNTIME",
+                                             config.enrollImagesStopRuntime);
+    // Stage image enrollment on disk, not in /run (tmpfs), to protect RAM (INV-052).
+    config.enrollTempDir = home + "/.cache/lumina/enroll";
     config.enroll.binary = home + "/lumina_enroll";
     config.enroll.modelDir = home + "/models/face";
     config.enroll.store = home + "/models/face/embeddings.bin";

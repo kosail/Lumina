@@ -464,6 +464,16 @@ void Pipeline::statusLoop(std::stop_token stopToken)
         lastWindow = now;
         lastFrames = frames;
     }
+
+    // One final snapshot with running=false, so a client that reads only the file
+    // contents (not its age) still sees that the runtime has stopped.
+    status::StatusSnapshot finalSnapshot;
+    finalSnapshot.running = false;
+    finalSnapshot.uptimeSeconds =
+        static_cast<int>(core::toMilliseconds(core::now() - m_startTime) / 1000.0);
+    finalSnapshot.faceCount = m_people.size();
+    finalSnapshot.people = m_people;
+    m_status->publish(finalSnapshot);
 }
 
 } // namespace lumina::app

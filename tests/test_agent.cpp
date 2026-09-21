@@ -262,3 +262,28 @@ TEST_CASE("agent enroll: runtime is restarted even when the tool fails")
     CHECK(exitCode == 2);
     CHECK(runtime.starts == 1);  // the finally always runs
 }
+
+TEST_CASE("agent enroll: frame count is clamped into range")
+{
+    CHECK(clampFrameCount(10, 10, 10) == 10);
+    CHECK(clampFrameCount(5, 10, 10) == 5);
+    CHECK(clampFrameCount(0, 10, 10) == 10);        // omitted -> fallback
+    CHECK(clampFrameCount(-3, 10, 10) == 10);       // bad -> fallback
+    CHECK(clampFrameCount(999999, 10, 10) == 10);   // huge -> max
+    CHECK(clampFrameCount(7, 3, 10) == 7);
+    CHECK(clampFrameCount(0, 0, 0) == 1);           // max floor cannot go below 1
+}
+
+TEST_CASE("agent json: quoted text inside a value is not a key")
+{
+    CHECK(jsonGetString(R"({"t":"volume.get"})", "t").value() == "volume.get");
+    // The value "t" is quoted text, not the key, so the key must not be found.
+    CHECK_FALSE(jsonGetString(R"({"value":"t"})", "t").has_value());
+}
+
+TEST_CASE("agent telemetry: negative face count is clamped")
+{
+    const auto status = parseStatusBlock("running=1\nface_count=-4\n");
+    REQUIRE(status.has_value());
+    CHECK(status->faceCount == 0);
+}

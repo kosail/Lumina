@@ -26,6 +26,11 @@ User=@LUMINA_USER@
 WorkingDirectory=@LUMINA_HOME@
 Environment=LUMINA_HOME=@LUMINA_HOME@
 Environment=LUMINA_LOG_LEVEL=info
+# Bind control to the hotspot gateway so the app (which always talks to its
+# gateway) reaches it without exposing the port on other networks; point the
+# telemetry broadcast at the hotspot subnet (substituted by 10-setup_agent.sh).
+Environment=LUMINA_AGENT_BIND_ADDR=@LUMINA_BIND_ADDR@
+Environment=LUMINA_AGENT_BROADCAST=@LUMINA_BROADCAST@
 ExecStart=@LUMINA_HOME@/lumina_agent
 Restart=on-failure
 RestartSec=5

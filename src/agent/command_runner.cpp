@@ -7,35 +7,34 @@
 #include <cerrno>
 #include <csignal>
 #include <cstddef>
-#include <cstdlib>
 #include <cstring>
 #include <poll.h>
+#include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
 
 #include "core/logging.hpp"
+
+// The C runtime's environment block, so a spawned child inherits the agent's
+// environment (PATH, HOME, ...). Provided by the C library; declared here rather
+// than relying on a feature-test macro to expose it.
+extern char** environ;
 
 namespace lumina::agent {
 
 namespace {
 
-// Neutralize SIGPIPE for the agent: if the child dies mid-write we want read() to
-// return 0 (EOF) rather than killing the whole agent. Ignoring it process-wide is
-// safe here because the agent only writes to sockets with MSG_NOSIGNAL-like care.
-void ignoreSigpipeOnce()
-{
-    static const bool done = [] {
-        ::signal(SIGPIPE, SIG_IGN);
-        return true;
-    }();
-    (void)done;
-}
-
-// Fork+exec `argv` with stderr redirected into stdout. On success returns the read
-// end of the pipe and sets `pid`; returns -1 (after logging) on failure.
+// Launch `argv` with stdout+stderr redirected into a pipe, returning the read end
+// and setting `pid`, or -1 (after logging) on failure.
+//
+// posix_spawnp is the multi-thread-safe way to start a child. The agent has several
+// threads, and fork()+execvp() would risk the child deadlocking on a lock another
+// thread held at fork time (execvp is not async-signal-safe). posix_spawnp avoids
+// that entirely and is the recommended API for exactly this situation.
 int spawn(const std::vector<std::string>& argv, pid_t& pid)
 {
-    // Build the argv vector in the parent (no allocation after fork()).
+    // Build the argv array before spawning (posix_spawnp does not modify it).
     std::vector<char*> cargv;
     cargv.reserve(argv.size() + 1);
     for (const std::string& argument : argv) {
@@ -48,24 +47,26 @@ int spawn(const std::vector<std::string>& argv, pid_t& pid)
         LUMINA_LOG_WARN("agent: pipe() failed: {}", std::strerror(errno));
         return -1;
     }
-    pid = ::fork();
-    if (pid < 0) {
-        LUMINA_LOG_WARN("agent: fork() failed: {}", std::strerror(errno));
+
+    // File actions wire the child's stdout+stderr to the pipe's write end and close
+    // both original pipe descriptors in the child, so only the dup'ed descriptors
+    // survive exec (no descriptor leaks into amixer/systemctl/lumina_enroll).
+    posix_spawn_file_actions_t actions;
+    ::posix_spawn_file_actions_init(&actions);
+    ::posix_spawn_file_actions_adddup2(&actions, fds[1], STDOUT_FILENO);
+    ::posix_spawn_file_actions_adddup2(&actions, fds[1], STDERR_FILENO);
+    ::posix_spawn_file_actions_addclose(&actions, fds[0]);
+    ::posix_spawn_file_actions_addclose(&actions, fds[1]);
+
+    const int spawnError = ::posix_spawnp(&pid, cargv[0], &actions, nullptr, cargv.data(), environ);
+    ::posix_spawn_file_actions_destroy(&actions);
+    if (spawnError != 0) {
+        LUMINA_LOG_WARN("agent: posix_spawnp('{}') failed: {}", argv[0], std::strerror(spawnError));
         ::close(fds[0]);
         ::close(fds[1]);
         return -1;
     }
-    if (pid == 0) {
-        // Child: wire the pipe to stdout+stderr and exec. Only async-signal-safe
-        // calls are used after fork().
-        ::close(fds[0]);
-        ::dup2(fds[1], STDOUT_FILENO);
-        ::dup2(fds[1], STDERR_FILENO);
-        ::close(fds[1]);
-        ::execvp(cargv[0], cargv.data());
-        ::_exit(127);  // exec failed; 127 mirrors a shell "command not found"
-    }
-    ::close(fds[1]);
+    ::close(fds[1]);  // the parent keeps only the read end
     return fds[0];
 }
 
@@ -92,7 +93,6 @@ CommandResult SystemCommandRunner::run(const std::vector<std::string>& argv)
     if (argv.empty()) {
         return result;
     }
-    ignoreSigpipeOnce();
 
     pid_t pid = 0;
     const int fd = spawn(argv, pid);
@@ -116,7 +116,6 @@ int SystemCommandRunner::runLines(const std::vector<std::string>& argv,
     if (argv.empty()) {
         return -1;
     }
-    ignoreSigpipeOnce();
 
     pid_t pid = 0;
     const int fd = spawn(argv, pid);

@@ -129,6 +129,18 @@ std::optional<std::vector<std::uint8_t>> decodeBase64(std::string_view text)
 }
 
 
+int clampFrameCount(long long requested, int fallback, int max)
+{
+    if (max < 1) {
+        max = 1;
+    }
+    if (requested <= 0) {
+        const int safeFallback = fallback < 1 ? 1 : fallback;
+        return safeFallback > max ? max : safeFallback;
+    }
+    return requested > max ? max : static_cast<int>(requested);
+}
+
 SystemRuntimeControl::SystemRuntimeControl(ICommandRunner& runner) : m_runner(runner) {}
 
 bool SystemRuntimeControl::stop()
@@ -213,7 +225,8 @@ int EnrollOrchestrator::enrollFromCamera(const std::string& name, int frames,
 
 int EnrollOrchestrator::enrollFromImages(const std::string& name,
                                          const std::vector<std::string>& imagePaths,
-                                         const EnrollCallback& onEvent)
+                                         const EnrollCallback& onEvent,
+                                         const std::atomic<bool>* cancel)
 {
     std::vector<std::string> args = baseArgs();
     args.insert(args.end(), {"--name", name});
@@ -223,11 +236,13 @@ int EnrollOrchestrator::enrollFromImages(const std::string& name,
     args.insert(args.end(), {"--model-dir", m_paths.modelDir, "--store", m_paths.store});
 
     return m_runner.runLines(
-        args, [&onEvent](const std::string& line) {
+        args,
+        [&onEvent](const std::string& line) {
             if (const std::optional<EnrollEvent> event = parseEnrollLine(line)) {
                 onEvent(*event);
             }
-        });
+        },
+        cancel);
 }
 
 }  // namespace lumina::agent

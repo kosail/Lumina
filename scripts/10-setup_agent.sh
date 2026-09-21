@@ -133,9 +133,22 @@ fi
 $SUDO install -m 0440 -o root -g root "$tmp_sudoers" "$SUDOERS_DEST"
 
 # --- 4. Render + install the unit --------------------------------------------
+# The app always talks to its gateway (the Pi), so bind control to the hotspot
+# address and point the telemetry broadcast at the hotspot subnet. Both are
+# detected from the AP interface; fall back to "all interfaces" / limited broadcast.
+AP_IFACE="${AP_IFACE:-wlan0}"
+BIND_ADDR="$(ip -4 -o addr show "$AP_IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)"
+BROADCAST_ADDR="$(ip -4 -o addr show "$AP_IFACE" 2>/dev/null \
+  | awk '{for (i = 1; i <= NF; i++) if ($i == "brd") print $(i + 1)}' | head -n1)"
+BIND_ADDR="${BIND_ADDR:-0.0.0.0}"
+BROADCAST_ADDR="${BROADCAST_ADDR:-255.255.255.255}"
+echo "==> Hotspot '$AP_IFACE': bind=$BIND_ADDR broadcast=$BROADCAST_ADDR"
+
 echo "==> Installing $UNIT_DEST (user=$TARGET_USER home=$TARGET_HOME)"
 $SUDO sed -e "s|@LUMINA_USER@|${TARGET_USER}|g" \
           -e "s|@LUMINA_HOME@|${TARGET_HOME}|g" \
+          -e "s|@LUMINA_BIND_ADDR@|${BIND_ADDR}|g" \
+          -e "s|@LUMINA_BROADCAST@|${BROADCAST_ADDR}|g" \
           "$TEMPLATE" | $SUDO tee "$UNIT_DEST" >/dev/null
 $SUDO chmod 0644 "$UNIT_DEST"
 

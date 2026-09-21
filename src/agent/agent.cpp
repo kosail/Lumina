@@ -13,6 +13,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <sys/stat.h>
 #include <utility>
 #include <vector>
@@ -60,6 +61,21 @@ std::string boolJson(bool value)
     return value ? "true" : "false";
 }
 
+// Compare two strings without an early exit, so the time taken does not reveal the
+// position of the first differing byte. The length is compared first (the token
+// length is not a secret); equal lengths are then folded byte by byte.
+bool constantTimeEquals(std::string_view a, std::string_view b)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    unsigned char difference = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        difference |= static_cast<unsigned char>(a[i] ^ b[i]);
+    }
+    return difference == 0;
+}
+
 }  // namespace
 
 Agent::Agent(AgentConfig config, ICommandRunner& runner)
@@ -68,7 +84,7 @@ Agent::Agent(AgentConfig config, ICommandRunner& runner)
     , m_runtime(runner)
     , m_volume(runner)
     , m_enroller(runner, m_runtime, m_config.enroll)
-    , m_udp(m_config.telemetryPort)
+    , m_udp(m_config.telemetryPort, m_config.broadcastAddress)
 {
 }
 
@@ -83,28 +99,39 @@ bool Agent::start()
         return false;
     }
     m_control = std::make_unique<ControlServer>(
-        m_config.controlPort,
+        m_config.controlPort, m_config.bindAddress,
         [this](const std::string& line, const ReplyFn& reply) { return handleRequest(line, reply); });
     if (!m_control->start()) {
         m_udp.close();
         return false;
     }
+    m_udpThread = std::jthread([this](std::stop_token token) { udpLoop(token); });
     m_telemetryThread = std::jthread([this](std::stop_token token) { telemetryLoop(token); });
     return true;
 }
 
 void Agent::stop()
 {
+    // Abort any in-flight enrollment so shutdown does not wait for the 60 s
+    // deadline; the orchestrator still restarts the runtime afterwards.
+    m_enrollCancel.store(true, std::memory_order_relaxed);
     if (m_telemetryThread.joinable()) {
         m_telemetryThread.request_stop();
+    }
+    if (m_udpThread.joinable()) {
+        m_udpThread.request_stop();
     }
     if (m_control) {
         m_control->stop();
     }
-    m_udp.close();
+    // Join the threads before closing the socket they may still be using.
     if (m_telemetryThread.joinable()) {
         m_telemetryThread.join();
     }
+    if (m_udpThread.joinable()) {
+        m_udpThread.join();
+    }
+    m_udp.close();
 }
 
 void Agent::telemetryLoop(std::stop_token stopToken)
@@ -117,7 +144,68 @@ void Agent::telemetryLoop(std::stop_token stopToken)
         if (stopToken.stop_requested()) {
             break;
         }
-        m_udp.send(buildTelemetryJson(collectState()));
+        publishTelemetry();
+    }
+}
+
+void Agent::udpLoop(std::stop_token stopToken)
+{
+    while (!stopToken.stop_requested()) {
+        std::string payload;
+        struct sockaddr_in from;
+        if (!m_udp.receive(payload, from, 200)) {
+            continue;  // timeout: re-check stop_requested
+        }
+        // Only a subscription datagram matters; anything else is ignored.
+        if (payload.find("\"subscribe\"") == std::string::npos) {
+            continue;
+        }
+
+        {
+            const std::lock_guard<std::mutex> lock(m_subscribersMutex);
+            bool found = false;
+            for (Subscriber& subscriber : m_subscribers) {
+                if (subscriber.address.sin_addr.s_addr == from.sin_addr.s_addr &&
+                    subscriber.address.sin_port == from.sin_port) {
+                    subscriber.lastSeen = std::chrono::steady_clock::now();
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                if (m_subscribers.size() >= m_config.maxSubscribers && !m_subscribers.empty()) {
+                    // Evict the oldest rather than refusing new clients.
+                    m_subscribers.erase(m_subscribers.begin());
+                }
+                m_subscribers.push_back(Subscriber{from, std::chrono::steady_clock::now()});
+                LUMINA_LOG_INFO("agent: telemetry subscriber added ({} live)",
+                                m_subscribers.size());
+            }
+        }
+        // Reply at once so the app paints without waiting for the next 1 Hz tick.
+        m_udp.sendTo(from, buildTelemetryJson(collectState()));
+    }
+}
+
+void Agent::publishTelemetry()
+{
+    const std::string payload = buildTelemetryJson(collectState());
+    m_udp.sendBroadcast(payload);
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto ttl = std::chrono::seconds(m_config.subscriberTtlSeconds);
+    std::vector<Subscriber> live;
+    {
+        const std::lock_guard<std::mutex> lock(m_subscribersMutex);
+        for (const Subscriber& subscriber : m_subscribers) {
+            if (now - subscriber.lastSeen <= ttl) {
+                live.push_back(subscriber);
+            }
+        }
+        m_subscribers = live;  // drop expired subscribers
+    }
+    for (const Subscriber& subscriber : live) {
+        m_udp.sendTo(subscriber.address, payload);
     }
 }
 
@@ -182,9 +270,10 @@ TelemetryState Agent::collectState()
 
 bool Agent::handleRequest(const std::string& line, const ReplyFn& reply)
 {
-    // Authentication first: every request must carry the shared token.
+    // Authentication first: every request must carry the shared token. The compare
+    // is length-checked then constant-time.
     const std::string token = jsonGetString(line, "token").value_or("");
-    if (m_config.token.empty() || token != m_config.token) {
+    if (m_config.token.empty() || !constantTimeEquals(token, m_config.token)) {
         reply("{\"t\":\"error\",\"code\":\"unauthorized\",\"message\":\"bad or missing token\"}");
         return false;  // close the connection
     }
@@ -238,12 +327,12 @@ bool Agent::handleRequest(const std::string& line, const ReplyFn& reply)
     return true;
 }
 
-void Agent::handleVolumeGet(const ReplyFn& reply)
+void Agent::handleVolumeGet(const ReplyFn& reply, bool ok)
 {
     const std::lock_guard<std::mutex> lock(m_volumeMutex);
     const AmixerVolume::State state = m_volume.read();
-    reply(std::format("{{\"t\":\"volume.state\",\"value\":{},\"muted\":{}}}", state.percent,
-                      boolJson(state.muted)));
+    reply(std::format("{{\"t\":\"volume.state\",\"ok\":{},\"value\":{},\"muted\":{}}}", boolJson(ok),
+                      state.percent, boolJson(state.muted)));
 }
 
 void Agent::handleVolumeSet(long long value, const ReplyFn& reply)
@@ -252,20 +341,22 @@ void Agent::handleVolumeSet(long long value, const ReplyFn& reply)
         reply("{\"t\":\"error\",\"code\":\"bad_request\",\"message\":\"volume must be 0..100\"}");
         return;
     }
+    bool ok = false;
     {
         const std::lock_guard<std::mutex> lock(m_volumeMutex);
-        m_volume.setPercent(static_cast<int>(value));
+        ok = m_volume.setPercent(static_cast<int>(value));
     }
-    handleVolumeGet(reply);
+    handleVolumeGet(reply, ok);
 }
 
 void Agent::handleVolumeMute(bool value, const ReplyFn& reply)
 {
+    bool ok = false;
     {
         const std::lock_guard<std::mutex> lock(m_volumeMutex);
-        m_volume.setMuted(value);
+        ok = m_volume.setMuted(value);
     }
-    handleVolumeGet(reply);
+    handleVolumeGet(reply, ok);
 }
 
 void Agent::handlePeopleList(const ReplyFn& reply)
@@ -317,16 +408,17 @@ void Agent::handleEnrollCamera(const std::string& name, long long frames, const 
         reply("{\"t\":\"error\",\"code\":\"busy\",\"message\":\"an enrollment is already running\"}");
         return;
     }
-    if (frames <= 0) {
-        frames = m_config.enrollFrames;
-    }
+
+    // Never trust the requested count: clamp it to [1, enrollFrames]. This bounds
+    // the work and the store growth, and keeps the value safe to cast to int.
+    const int frameTarget = clampFrameCount(frames, m_config.enrollFrames, m_config.enrollFrames);
     m_enrollCancel.store(false, std::memory_order_relaxed);
     {
         const std::lock_guard<std::mutex> lock(m_stateMutex);
         m_enrollActive = true;
         m_enrollPhase = "stopping_runtime";
         m_enrollCaptured = 0;
-        m_enrollTotal = static_cast<int>(frames);
+        m_enrollTotal = frameTarget;
     }
 
     int captured = 0;
@@ -353,13 +445,13 @@ void Agent::handleEnrollCamera(const std::string& name, long long frames, const 
             }
             reply(std::format("{{\"t\":\"enroll.progress\",\"phase\":\"capturing\",\"captured\":{},"
                               "\"total\":{}}}",
-                              event.captured, event.total > 0 ? event.total : static_cast<int>(frames)));
+                              event.captured, event.total > 0 ? event.total : frameTarget));
             break;
         case EnrollEvent::Kind::NoFace:
             reply(std::format(
                 "{{\"t\":\"enroll.progress\",\"phase\":\"capturing\",\"captured\":{},\"total\":{},"
                 "\"message\":\"no face detected\"}}",
-                captured, static_cast<int>(frames)));
+                captured, frameTarget));
             break;
         case EnrollEvent::Kind::Enrolled:
             captured = event.captured;
@@ -370,8 +462,7 @@ void Agent::handleEnrollCamera(const std::string& name, long long frames, const 
         }
     };
 
-    const int exitCode =
-        m_enroller.enrollFromCamera(name, static_cast<int>(frames), onEvent, &m_enrollCancel);
+    const int exitCode = m_enroller.enrollFromCamera(name, frameTarget, onEvent, &m_enrollCancel);
 
     {
         const std::lock_guard<std::mutex> lock(m_stateMutex);
@@ -408,8 +499,16 @@ void Agent::handleEnrollImages(const std::string& name, const std::string& image
         reply("{\"t\":\"error\",\"code\":\"bad_request\",\"message\":\"enroll.images needs 'images'\"}");
         return;
     }
+    if (encoded.size() > m_config.maxEnrollImages) {
+        reply(std::format(
+            "{{\"t\":\"error\",\"code\":\"bad_request\",\"message\":\"too many images (max {})\"}}",
+            m_config.maxEnrollImages));
+        return;
+    }
 
-    // Write each decoded image to a scratch directory the enrollment tool can read.
+    // Write each decoded image to a disk scratch directory the enrollment tool can
+    // read. Staging lives on disk (not /run tmpfs) so a batch of JPEGs cannot eat
+    // the board's RAM (INV-052).
     const std::filesystem::path directory =
         std::filesystem::path(m_config.enrollTempDir) / ("images-" + std::to_string(epochSeconds()));
     std::error_code filesystemError;
@@ -420,10 +519,17 @@ void Agent::handleEnrollImages(const std::string& name, const std::string& image
     }
 
     std::vector<std::string> paths;
+    std::size_t totalBytes = 0;
+    bool tooLarge = false;
     for (std::size_t i = 0; i < encoded.size(); ++i) {
         const std::optional<std::vector<std::uint8_t>> bytes = decodeBase64(encoded[i]);
         if (!bytes.has_value()) {
-            continue;  // skip a malformed frame; the tool reports if too few remain
+            continue;  // skip a malformed frame
+        }
+        if (bytes->size() > m_config.maxEnrollImageBytes ||
+            totalBytes + bytes->size() > m_config.maxEnrollImageBytes) {
+            tooLarge = true;
+            break;
         }
         const std::filesystem::path path = directory / ("frame-" + std::to_string(i) + ".jpg");
         std::ofstream output(path, std::ios::binary);
@@ -432,13 +538,28 @@ void Agent::handleEnrollImages(const std::string& name, const std::string& image
         }
         output.write(reinterpret_cast<const char*>(bytes->data()),
                      static_cast<std::streamsize>(bytes->size()));
+        totalBytes += bytes->size();
         paths.push_back(path.string());
     }
 
+    if (tooLarge) {
+        std::filesystem::remove_all(directory, filesystemError);
+        reply(std::format("{{\"t\":\"error\",\"code\":\"bad_request\",\"message\":\"images exceed {} "
+                          "bytes total\"}}",
+                          m_config.maxEnrollImageBytes));
+        return;
+    }
     if (paths.empty()) {
         std::filesystem::remove_all(directory, filesystemError);
         reply("{\"t\":\"error\",\"code\":\"bad_request\",\"message\":\"no decodable images\"}");
         return;
+    }
+
+    // Optional: stop the runtime while the tool loads its own copy of the models,
+    // to protect RAM on the board. Off by default (the runtime keeps running).
+    const bool stopRuntime = m_config.enrollImagesStopRuntime;
+    if (stopRuntime) {
+        m_runtime.stop();
     }
 
     {
@@ -470,8 +591,11 @@ void Agent::handleEnrollImages(const std::string& name, const std::string& image
         }
     };
 
-    const int exitCode = m_enroller.enrollFromImages(name, paths, onEvent);
+    const int exitCode = m_enroller.enrollFromImages(name, paths, onEvent, &m_enrollCancel);
     std::filesystem::remove_all(directory, filesystemError);
+    if (stopRuntime) {
+        m_runtime.start();  // always restore the runtime if we stopped it
+    }
 
     {
         const std::lock_guard<std::mutex> lock(m_stateMutex);
@@ -486,8 +610,9 @@ void Agent::handleEnrollImages(const std::string& name, const std::string& image
                           personCount, captured));
     } else {
         reply(std::format(
-            "{{\"t\":\"enroll.error\",\"exitCode\":{},\"message\":\"{}\",\"runtime\":\"started\"}}",
-            exitCode, escapeJson(errorMessage.empty() ? "enrollment failed" : errorMessage)));
+            "{{\"t\":\"enroll.error\",\"exitCode\":{},\"message\":\"{}\",\"runtime\":\"{}\"}}",
+            exitCode, escapeJson(errorMessage.empty() ? "enrollment failed" : errorMessage),
+            stopRuntime ? "started" : "unchanged"));
     }
 }
 

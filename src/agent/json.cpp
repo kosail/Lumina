@@ -17,15 +17,21 @@ namespace {
 [[nodiscard]] std::size_t findValue(std::string_view json, std::string_view key)
 {
     const std::string needle = "\"" + std::string(key) + "\"";
-    const std::size_t keyPos = json.find(needle);
-    if (keyPos == std::string_view::npos) {
-        return std::string_view::npos;
+    std::size_t keyPos = json.find(needle);
+    while (keyPos != std::string_view::npos) {
+        // Only accept the key at the start of the object or right after a comma, so
+        // quoted text inside a value cannot be mistaken for a key.
+        std::size_t before = keyPos;
+        while (before > 0 && std::isspace(static_cast<unsigned char>(json[before - 1])) != 0) {
+            --before;
+        }
+        if (before == 0 || json[before - 1] == '{' || json[before - 1] == ',') {
+            const std::size_t colon = json.find(':', keyPos + needle.size());
+            return colon == std::string_view::npos ? std::string_view::npos : colon + 1;
+        }
+        keyPos = json.find(needle, keyPos + 1);
     }
-    const std::size_t colon = json.find(':', keyPos + needle.size());
-    if (colon == std::string_view::npos) {
-        return std::string_view::npos;
-    }
-    return colon + 1;
+    return std::string_view::npos;
 }
 
 void skipWhitespace(std::string_view json, std::size_t& index)

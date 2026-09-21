@@ -4,9 +4,12 @@
 
 #include "agent/control.hpp"
 
+#include <arpa/inet.h>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -17,8 +20,17 @@
 
 namespace lumina::agent {
 
-ControlServer::ControlServer(int port, RequestHandler handler)
-    : m_port(port), m_handler(std::move(handler))
+namespace {
+
+// Largest request line we accept over the control channel. A client that sends a
+// huge line without a newline is dropped rather than growing the buffer without
+// bound. Comfortably larger than any request (image enrollment is bounded by caps).
+constexpr std::size_t kMaxLineBytes = 64 * 1024;
+
+}  // namespace
+
+ControlServer::ControlServer(int port, std::string bindAddress, RequestHandler handler)
+    : m_port(port), m_bindAddress(std::move(bindAddress)), m_handler(std::move(handler))
 {
 }
 
@@ -34,14 +46,21 @@ bool ControlServer::start()
         LUMINA_LOG_ERROR("agent: control socket() failed: {}", std::strerror(errno));
         return false;
     }
+    // Close-on-exec: spawned commands must not inherit the listening socket.
+    ::fcntl(m_listenFd, F_SETFD, FD_CLOEXEC);
     int reuse = 1;
     ::setsockopt(m_listenFd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
     struct sockaddr_in address;
     std::memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_ANY);  // reachable on the hotspot subnet
     address.sin_port = htons(static_cast<std::uint16_t>(m_port));
+    if (::inet_pton(AF_INET, m_bindAddress.c_str(), &address.sin_addr) != 1) {
+        LUMINA_LOG_ERROR("agent: invalid bind address '{}'", m_bindAddress);
+        ::close(m_listenFd);
+        m_listenFd = -1;
+        return false;
+    }
 
     if (::bind(m_listenFd, reinterpret_cast<struct sockaddr*>(&address), sizeof(address)) != 0) {
         LUMINA_LOG_ERROR("agent: control bind(:{}) failed: {}", m_port, std::strerror(errno));
@@ -84,6 +103,8 @@ void ControlServer::serve()
             LUMINA_LOG_WARN("agent: control accept() failed: {}", std::strerror(errno));
             continue;
         }
+        // Close-on-exec: spawned commands must not inherit the client socket.
+        ::fcntl(clientFd, F_SETFD, FD_CLOEXEC);
         m_connections.emplace_back([this, clientFd] { handleConnection(clientFd); });
     }
 
@@ -128,6 +149,10 @@ void ControlServer::handleConnection(int clientFd)
             break;  // peer closed or error
         }
         pending.append(buffer, static_cast<std::size_t>(count));
+        if (pending.size() > kMaxLineBytes) {
+            LUMINA_LOG_WARN("agent: control client sent an oversized line; closing");
+            break;
+        }
 
         bool keepOpen = true;
         std::size_t newline = 0;

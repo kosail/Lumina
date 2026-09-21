@@ -13,16 +13,18 @@ status file; a separate, opt-in **`lumina_agent`** process owns every socket.
 
 ```
    PHONE / DESKTOP  (Compose Multiplatform, separate project)
-      │  UDP 47600 telemetry (listen)      │  TCP 47601 control (JSON + token)
+      │  UDP 47600  subscribe + receive   │  TCP 47601 control (JSON + token)
       ▼                                    ▼
-   Pi hotspot (wlan0; 2.4 GHz; no internet)
+   Pi hotspot (wlan0; 2.4 GHz; no internet)  ◀── the app's gateway = the Pi
       lumina (C++ runtime)  ──writes──▶  /run/lumina/status   (~1 Hz, local only)
-      lumina_agent (C++)    ──reads───▶  status + OS stats, serves UDP/TCP
-                              └─shells─▶ amixer -D bluealsa | systemctl | lumina_enroll
+      lumina_agent (C++)    ──reads───▶  status + OS stats
+                              ├─ broadcast + unicast to subscribers (UDP 47600)
+                              └─ shells─▶ amixer -D bluealsa | systemctl | lumina_enroll
 ```
 
-- The Pi is the hotspot (`sudo nmcli device wifi hotspot ifname wlan0 ssid ...`). Clients are
-  interchangeable; there is **no laptop relay server**.
+- The Pi is the hotspot (`sudo nmcli device wifi hotspot ifname wlan0 ssid ...`). The app always
+  talks to its **gateway** (the Pi), so control binds that address and telemetry is unicast to
+  subscribers. No laptop relay server.
 - The agent is a separate binary from the runtime, built from the same CMake project, so it never
   shares threads or memory with the detection/speech path (INV-031/INV-050).
 
@@ -58,19 +60,25 @@ sink_ready=1
 
 The agent treats the file as stale (runtime not reachable) when its mtime is older than ~5 s.
 
-The service must be able to create the directory; `lumina.service` uses
-`RuntimeDirectory=lumina`, which makes systemd create `/run/lumina` owned by the service user.
+The shared `/run/lumina` directory is created by the agent setup script via
+`/etc/tmpfiles.d/lumina.conf` (so it survives a runtime stop, which a `RuntimeDirectory=` would
+not). Without it the status writer fails harmlessly (it logs once and the runtime keeps running).
 
 ## 4. Agent (`lumina_agent`)
 
 | Responsibility | How |
 |---|---|
-| Telemetry | read status file + `/sys/class/thermal/thermal_zone0/temp` + `/proc/meminfo` + `/proc/loadavg`; broadcast JSON to `255.255.255.255:47600` @1 Hz |
-| Volume | `amixer -D bluealsa`: discover control name, `sget` to read, `sset '<ctrl>' <n>%` / `mute` / `unmute` |
+| Telemetry | read status file + `/sys/class/thermal/thermal_zone0/temp` + `/proc/meminfo` + `/proc/loadavg`; broadcast the JSON and unicast it to subscribers (UDP 47600) @1 Hz |
+| Subscriptions | listen on UDP 47600; a `{"t":"subscribe"}` datagram registers the sender for 10 s of unicast and gets an immediate `status` reply (bounded to 8 clients) |
+| Volume | `amixer -D bluealsa`: discover control name, `sget` to read, `sset '<ctrl>' <n>%` / `mute` / `unmute`; the reply carries `ok` |
 | People | names come from the runtime status file's one-per-line `person=` entries (the runtime knows the enrolled store), surfaced in the telemetry `people` array |
 | Runtime control | `systemctl stop/start lumina` (narrow sudoers) |
-| Enrollment (camera) | stop runtime → `lumina_enroll --camera --frames 10` as user `lumina` → **always** start runtime; stream `captured N/10` |
-| Enrollment (images) | write frames to a temp dir → `lumina_enroll --image ... --image ...`; runtime keeps running |
+| Enrollment (camera) | stop runtime → `lumina_enroll --camera --frames <1..10>` as user `lumina` → **always** start runtime; stream `captured N/10` |
+| Enrollment (images) | decode + stage frames on disk (caps: 12 images / 8 MiB) → `lumina_enroll --image ...`; runtime keeps running unless `LUMINA_AGENT_ENROLL_STOP_RUNTIME=1` |
+| Shutdown | `stop()` cancels any in-flight enrollment so the service stops promptly, then the orchestrator still restarts the runtime |
+
+Processes are launched with `posix_spawnp` (multi-thread-safe), and every socket is closed-on-exec so
+children never inherit the agent's descriptors.
 | Control server | token-gated, newline JSON, binds the hotspot interface |
 
 The enrollment tool runs as the **`lumina` user** so `models/face/embeddings.bin` stays owned and

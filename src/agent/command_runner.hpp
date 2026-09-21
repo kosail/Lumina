@@ -40,8 +40,8 @@ public:
                          const std::atomic<bool>* cancel = nullptr) = 0;
 };
 
-// Production runner: fork(2)/execvp(3) with stderr redirected into stdout so a
-// single pipe carries both streams in order.
+// Production runner: posix_spawnp(3) with stdout+stderr redirected into one pipe
+// (multi-thread-safe, unlike fork()+execvp()).
 class SystemCommandRunner final : public ICommandRunner {
 public:
     CommandResult run(const std::vector<std::string>& argv) override;

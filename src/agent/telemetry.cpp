@@ -106,7 +106,8 @@ std::optional<RuntimeStatus> parseStatusBlock(std::string_view text)
             }
         } else if (key == "face_count") {
             if (const auto parsed = toInt(value)) {
-                status.faceCount = static_cast<std::size_t>(*parsed);
+                // Never let a negative value wrap into a huge size_t.
+                status.faceCount = *parsed > 0 ? static_cast<std::size_t>(*parsed) : 0;
             }
         } else if (key == "sink_ready") {
             if (const auto parsed = toInt(value)) {

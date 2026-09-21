@@ -45,6 +45,12 @@ struct EnrollEvent {
 // where the app sends captured JPEGs as base64 strings.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> decodeBase64(std::string_view text);
 
+// Clamp a requested frame count into [1, max]. `fallback` is used when `requested`
+// is non-positive (the client omitted it or sent a bad value). This bounds the work
+// and the enrollment-store growth from an untrusted request, and keeps the value
+// safe to cast to int. Pure, so it is unit-tested.
+[[nodiscard]] int clampFrameCount(long long requested, int fallback, int max);
+
 // Controls `lumina.service`. Abstracted so the orchestrator is testable and so
 // the privileged `systemctl` calls stay in one place.
 class IRuntimeControl {
@@ -88,9 +94,10 @@ public:
     int enrollFromCamera(const std::string& name, int frames, const EnrollCallback& onEvent,
                          const std::atomic<bool>* cancel);
 
-    // Enroll from image files already written to disk; the runtime is untouched.
+    // Enroll from image files already written to disk; the runtime is untouched
+    // unless the caller stopped it. Honors `cancel`.
     int enrollFromImages(const std::string& name, const std::vector<std::string>& imagePaths,
-                         const EnrollCallback& onEvent);
+                         const EnrollCallback& onEvent, const std::atomic<bool>* cancel = nullptr);
 
 private:
     // [env LD_LIBRARY_PATH=...,] <binary> — shared prefix for both routes.
