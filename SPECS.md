@@ -70,6 +70,9 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
   1. `scripts/enroll_face.sh` (or equivalent) enrolls one named person in a single run.
   2. Enrollment data is persisted and reloaded on subsequent boots.
   3. Enrolling N people does not require recompilation.
+- **Verified on-device (2026-09-21, CHG-0083):** `scripts/enroll_face.sh "<name>" --camera` captured
+  and persisted embeddings; the runtime reloaded the store on restart and greeted the enrolled person
+  by name. Runbook: `docs/FACE.md`.
 
 ### FR-05 — Spanish text-to-speech (Piper)
 - **Priority:** MUST · **Status:** Approved · **Trace:** INV-042, INV-022
@@ -81,13 +84,17 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
   3. A safety alert can interrupt ongoing speech (see FR-02).
 
 ### FR-06 — Bluetooth A2DP audio output to the single paired device
-- **Priority:** MUST · **Status:** Approved · **Trace:** INV-014
+- **Priority:** MUST · **Status:** Implemented · **Trace:** INV-014
 - **Description:** Route all audio to the bone-conduction earbuds over A2DP via bluealsa, using the
   already-paired device.
 - **Acceptance criteria:**
   1. Audio plays through the earbuds after boot without manual intervention.
   2. The runtime does not attempt to manage any other Bluetooth device.
   3. First-word latency after idle is acceptable (suspend-on-idle disabled — see `RAW_PLAN.md` §9).
+- **Implementation (CHG-0077):** `scripts/bt_setup.sh` pairs/trusts the single device;
+  `scripts/lumina.service` autostarts the runtime; `src/audio/sink_watchdog.*` retries the
+  `bluealsa` sink every 3 s (60 attempts = 3 min) and then powers the device off (or stops the
+  runtime if power-off is not permitted). See `docs/BLUETOOTH.md`.
 
 ### FR-07 — Preemptible, priority-ordered speech queue
 - **Priority:** MUST · **Status:** Approved · **Trace:** INV-032
@@ -154,7 +161,9 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
 
 ### NFR-04 — Startup
 - **Priority:** SHOULD · **Trace:** INV-053
-- Ready (models loaded, Bluetooth audio connected) within ~30 s of power-on.
+- Ready (models loaded, Bluetooth audio connected) within ~60 s of power-on; ~40 s when the earbuds
+  are already connected at boot. *(Amended by CHG-0082: the initial ~30 s was an estimate; the first
+  measured cold boot is ~62 s — user accepted.)*
 
 ### NFR-05 — Reliability
 - **Priority:** MUST · **Trace:** INV-031, INV-032

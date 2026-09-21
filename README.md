@@ -78,7 +78,7 @@ src/
   i18n/         Spanish message catalog
   telemetry/    optional UDP telemetry
 models/         yolo11n_ncnn/, face/, voices/
-scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, 7-setup_i2c.sh, enroll_face.sh, bt_setup.sh
+scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, 7-setup_i2c.sh, 8-fetch_face_models.sh, enroll_face.sh, bt_setup.sh, 9-setup_autostart.sh (+ lumina.service)
 tests/          unit tests (doctest) and on-device benchmarks
 cmake/          aarch64 toolchain and find-modules
 ```
@@ -159,7 +159,24 @@ Compile-time options (defaults shown):
 ./build/aarch64/lumina
 ```
 
-Audio is routed to the paired bone-conduction earbuds automatically at startup.
+Audio is routed to the paired bone-conduction earbuds automatically at startup. The runtime waits
+up to 3 minutes for the BlueALSA sink before giving up (FR-06.1): if it never appears it powers the
+device off, or just stops the runtime when power-off is not permitted. Verified on-device
+(CHG-0081) with the earbuds both connected and disconnected. See `docs/BLUETOOTH.md`.
+
+### Autostart at boot
+
+Install and enable the systemd service (also adds the narrow power-off sudoers rule):
+
+```bash
+scripts/bt_setup.sh              # pair/trust the single earbud (system layer)
+scripts/9-setup_autostart.sh     # install + enable lumina.service
+```
+
+First cold boot with the service enabled: ready in **~60 s**. Roughly 18 s is boot-to-start, ~21 s is
+model load (Piper dominates), and — if the earbuds are not connected yet — up to ~21 s more is the
+watchdog waiting for the BlueALSA sink. Power the earbuds on before (or at) the Pi to avoid that wait
+(~40 s total). Measured 2026-09-20; see `docs/PERFORMANCE.md` §14.
 
 Runtime environment variables (all optional):
 
@@ -168,6 +185,24 @@ Runtime environment variables (all optional):
 | `LUMINA_LOG_LEVEL` | `trace`/`debug`/`info`/`warn`/`error`/`off` (default `info`) |
 | `PIPER_NUM_THREADS` | Piper/ONNX Runtime intra-op threads (default 3) |
 | `LUMINA_PHRASE_CACHE_DIR` | On-disk TTS phrase cache directory (default `$HOME/.cache/lumina/phrase-cache`) |
+| `ORT_DISABLE_TELEMETRY` | Set to `1` to silence ONNX Runtime telemetry. **Privacy: the runtime sets this in-process before ONNX Runtime initializes (CHG-0080); you do not need to export it, and Lúmina never phones home (INV-003/INV-034).** |
+
+### Privacy / no network
+
+Lúmina performs **no cloud/network calls** (INV-003, INV-034). The one thing that would have
+violated this is the official ONNX Runtime prebuilt behind libpiper, which ships telemetry that
+POSTs to `mobile.events.data.microsoft.com/OneCollector/1.0/`. The runtime disables it by setting
+`ORT_DISABLE_TELEMETRY=1` before ONNX Runtime initializes (`src/audio/piper_tts.cpp`), and
+`lumina.service` also sets it explicitly. Verify with a packet/socket watch:
+
+```bash
+strace -f -e trace=connect ./lumina models/yolo11n_ncnn_320x256 \
+  models/voices/es_MX-claude-high.onnx espeak-ng-data   # expect no AF_INET connects
+```
+
+**Verified on-device (CHG-0081):** with only the in-process `setenv` (no launcher export),
+`strace -e trace=connect` showed **no AF_INET connects**, so the code-level disable is sufficient.
+The `lumina.service` `Environment=` line is kept as belt-and-braces.
 
 ### Memory on the Pi Zero 2 W
 
@@ -196,7 +231,10 @@ Recommended system tuning:
 1. Runtime skeleton, capture, detector, TTS-to-Bluetooth vertical slice (Day-2 gate). — **done**
 2. Alert arbiter + Spanish alert catalog (Day 3). — **done** (see `docs/PERFORMANCE.md` §11)
 3. Face enrollment and recognition (Day 4). — **implemented; on-device verification pending**
-4. Boot-time Bluetooth autoconnect, soak testing, demo hardening.
+4. Boot-time Bluetooth autoconnect, soak testing, demo hardening. — **BT autoconnect + autostart
+   implemented** (`scripts/bt_setup.sh`, `scripts/9-setup_autostart.sh`, runtime sink watchdog;
+   see `docs/BLUETOOTH.md`, CHG-0077). The sink-watchdog `running`/`stop` polarity was fixed in
+   CHG-0079 (it previously skipped the wait and exited 0 immediately).
 5. Optional UDP telemetry (only after everything else passes).
 6. Front VL53L0X proximity alert — **implemented** (FR-10, `-DLUMINA_ENABLE_PROXIMITY=ON`, CHG-0074); rear sensor deferred to the very end (`docs/PROXIMITY.md`).
 
@@ -221,6 +259,10 @@ Enrollment writes `models/face/embeddings.bin` (up to 10 embeddings per person) 
 reloads automatically on the next boot. Embeddings and photos stay on the device
 (FR-03.4). For best results give each person **3–5 varied, front-facing, well-lit
 photos**. The runtime greets a recognized person with "<nombre> está enfrente".
+
+The **live `--camera` path was verified on-device (2026-09-21, CHG-0083)**: stop the runtime first
+(it holds the camera), enroll, then restart so the greeting is pre-warmed. Full runbook,
+verification steps and troubleshooting: **`docs/FACE.md`**.
 
 ## License and third-party notices
 

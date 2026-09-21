@@ -33,6 +33,7 @@
 #include "audio/bluealsa_sink.hpp"
 #include "audio/caching_tts.hpp"
 #include "audio/piper_tts.hpp"
+#include "audio/sink_watchdog.hpp"
 #include "capture/libcamera_source.hpp"
 #include "core/logging.hpp"
 #include "sensors/proximity.hpp"
@@ -49,8 +50,14 @@ namespace {
 // the platforms we target, so writing it from a signal handler is safe.
 std::atomic<bool> g_running{true};
 
-extern "C" void handleSignal(int /*signal*/)
+// Last stop signal received, for diagnostics only (logged when the audio-sink
+// wait is interrupted). `volatile std::sig_atomic_t` is the only type the C++
+// standard guarantees is safe to assign from a signal handler.
+volatile std::sig_atomic_t g_stopSignal = 0;
+
+extern "C" void handleSignal(int signal)
 {
+    g_stopSignal = signal;
     g_running.store(false, std::memory_order_relaxed);
 }
 
@@ -190,6 +197,34 @@ int main(int argc, char** argv)
     lumina::audio::AlsaConfig alsaConfig; // defaults to the bluealsa PCM
     lumina::audio::AlsaSink sink(alsaConfig);
 
+    // Install the stop handlers before the sink wait so Ctrl-C during the (up to
+    // 3-minute) wait is observed instead of killing the process outright.
+    std::signal(SIGINT, handleSignal);
+    std::signal(SIGTERM, handleSignal);
+
+    // FR-06.1: never crash when the Bluetooth sink is absent. The bluealsa PCM is
+    // only present while the single paired earbud is connected, so a cold boot may
+    // need to wait. Retry, and on exhaustion request a host power-off; either way
+    // we exit cleanly instead of failing inside pipeline.start().
+    lumina::audio::SinkWaitConfig sinkWaitConfig;
+    sinkWaitConfig.retryIntervalMs = config.audioSinkRetryIntervalMs;
+    sinkWaitConfig.maxRetries = config.audioSinkMaxRetries;
+    sinkWaitConfig.shutdownOnFailure = config.audioSinkShutdownOnFailure;
+    lumina::audio::SinkWatchdog sinkWatchdog(sinkWaitConfig);
+    const lumina::audio::SinkWaitResult sinkResult = sinkWatchdog.awaitReady(sink, g_running);
+    if (sinkResult != lumina::audio::SinkWaitResult::Ready) {
+        // Interrupted means SIGINT/SIGTERM arrived during the wait: a normal stop.
+        // Exhausted means the sink never appeared; exit code 2 is listed in
+        // RestartPreventExitStatus so systemd does not restart-loop (see
+        // scripts/lumina.service). Log which happened so it is never silent again.
+        if (sinkResult == lumina::audio::SinkWaitResult::Interrupted) {
+            LUMINA_LOG_WARN("audio sink wait interrupted by signal {}; stopping",
+                            static_cast<int>(g_stopSignal));
+            return 0;
+        }
+        return 2;
+    }
+
     // Front proximity sensor (FR-10). The factory returns a Null sensor when the
     // feature is not compiled in or is disabled, so injection is always safe; a
     // failed init also falls back to Null rather than failing startup.
@@ -208,8 +243,6 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
     LUMINA_LOG_INFO("Lúmina running; press Ctrl-C to stop");
 
     while (g_running.load(std::memory_order_relaxed)) {

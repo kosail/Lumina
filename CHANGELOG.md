@@ -2614,4 +2614,310 @@
     which NFR-04 also depends on). Optional, if wanted: address the proximity/camera cross-channel
     repetition (share a dedup key, or hold the close state ~1 s). No SPECS.md change made here;
     annotate NFR-04 as "not met as counted" when the startup item is closed.
+
+# ---------------------------------------------------------------------------
+# CHG-0077 — Boot-time Bluetooth autoconnect, non-fatal sink, autostart service
+# ---------------------------------------------------------------------------
+- id: CHG-0077
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: impl
+  status: applied
+  invariants: [INV-014, INV-030, INV-053, INV-070]
+  supersedes: null
+  summary: >-
+    Implemented FR-06.1. (1) Runtime: the runtime no longer exits when the bluealsa
+    sink is absent at start. New src/audio/sink_watchdog.{hpp,cpp} retries
+    IAudioSink::open() every audioSinkRetryIntervalMs (default 3000) up to
+    audioSinkMaxRetries (default 60 = 3 min), interruptible by SIGINT/SIGTERM; on
+    exhaustion it requests a host power-off via new src/core/power.{hpp,cpp}
+    (systemctl poweroff --no-wall, via sudo -n when not root) and, if that fails,
+    just stops the runtime (exit code 2). main.cpp installs the signal handlers
+    before the wait and runs the watchdog before pipeline.start(). Config gains
+    audioSinkRetryIntervalMs/audioSinkMaxRetries/audioSinkShutdownOnFailure (clamped
+    + validated). The injected power-off action keeps the watchdog host-testable.
+    (2) System: scripts/bt_setup.sh discovers the single paired earbud (no hardcoded
+    MAC; --mac/--pair overrides), trusts it, sets [Policy] AutoEnable=true, and can
+    install an optional lumina-bt-connect.service. (3) Autostart:
+    scripts/lumina.service (template) + scripts/9-setup_autostart.sh install and
+    enable it and add a narrow /etc/sudoers.d/lumina-poweroff rule (systemctl
+    poweroff only); RestartPreventExitStatus=2 avoids a restart loop on the
+    deliberate no-sink exit.
+  rationale: >-
+    The bluealsa PCM exists only while the earbud is connected, so a cold boot made
+    Pipeline::start() return false and the process exit non-zero - the runtime
+    "crashed" whenever the buds were not ready. The user required: retry every 3 s
+    for 3 min, then power the Pi off if possible, else stop the runtime; plus an
+    autostart unit. The runtime must not hardcode a MAC (INV-014) - it just writes
+    to the bluealsa PCM, which resolves to whichever single device is connected -
+    so device identity lives only in the BlueZ setup script. The retry loop and the
+    power-off action are injected/pure so they run under host tests (INV-030).
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/sink_watchdog.hpp
+    - Lumina-BETA-RPI-2W/src/audio/sink_watchdog.cpp
+    - Lumina-BETA-RPI-2W/src/core/power.hpp
+    - Lumina-BETA-RPI-2W/src/core/power.cpp
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/mocks/mock_audio_sink.hpp
+    - Lumina-BETA-RPI-2W/tests/test_sink_watchdog.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/scripts/bt_setup.sh
+    - Lumina-BETA-RPI-2W/scripts/lumina.service
+    - Lumina-BETA-RPI-2W/scripts/9-setup_autostart.sh
+  approvals: [user]
+  follow_up: >-
+    Host: cmake --preset host && cmake --build --preset host && ctest --preset host
+    (new tests). aarch64: rebuild with the audio path. On-device: run
+    scripts/bt_setup.sh, then scripts/9-setup_autostart.sh --verify, then confirm a
+    cold boot reaches audio without a crash and that exit code 2 + power-off happens
+    when the earbuds are absent for 3 min. Re-measure NFR-04 with autostart.
+
+# ---------------------------------------------------------------------------
+# CHG-0078 — Document the Bluetooth layer (docs/BLUETOOTH.md)
+# ---------------------------------------------------------------------------
+- id: CHG-0078
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-014, INV-053, INV-070]
+  supersedes: null
+  summary: >-
+    Added docs/BLUETOOTH.md (two layers, why the sink is only present while
+    connected, the retry/power-off behavior, bt_setup.sh, the autostart service,
+    routing, verification, troubleshooting, and cited references). Updated README
+    (scripts list, Run/autostart, roadmap item 4), RAW_PLAN section 9 (implemented),
+    AGENTS section 4 (script list), SPECS FR-06 to Implemented with an implementation
+    note, and PERFORMANCE section 14.3 (autostart unit exists; readiness re-measure
+    pending).
+  rationale: >-
+    INV-001/AGENTS require cited external facts and a discoverable operational guide;
+    the BT setup had no document, and the runtime's new non-fatal-sink behavior and
+    power-off policy must be recorded so future agents do not re-derive them.
+  files:
+    - Lumina-BETA-RPI-2W/docs/BLUETOOTH.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/AGENTS.md
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Update docs/PERFORMANCE.md section 14.3 with the measured power-on -> ready time
+    once lumina.service is enabled on the Pi.
+
+# ---------------------------------------------------------------------------
+# CHG-0079 — Fix inverted running/stop flag in the sink watchdog (silent exit 0)
+# ---------------------------------------------------------------------------
+- id: CHG-0079
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-053, INV-070]
+  supersedes: null
+  summary: >-
+    SinkWatchdog::awaitReady read its second argument with inverted polarity: it treated it as
+    "stop requested" (true => return Interrupted), but main passes g_running, which is true for the
+    whole process lifetime. The very first check therefore returned Interrupted before any
+    sink.open(), and main mapped Interrupted to exit code 0, so every launch exited silently after
+    loading the models - no ALSA open, no retries, no power-off, no signal. Renamed the parameter to
+    `running` and inverted both checks to `!running.load(...)` (loop entry and sleep slice).
+    Corrected tests/test_sink_watchdog.cpp, which had encoded the same inverted contract (which is
+    why the suite stayed green) and added a polarity regression test. Added an INFO at wait entry
+    and a WARN on interruption with the signal number (new volatile sig_atomic_t g_stopSignal set by
+    handleSignal) so a wait that ends early can never be silent again.
+  rationale: >-
+    Root-caused on-device: strace showed no SIGINT/SIGTERM delivery and no ALSA openat, while gdb
+    showed g_running == 0x01 and that breakpoint AlsaSink::open was never hit; awaitReady was entered
+    and returned immediately. The runtime "not starting" (no audio, no logs past the phrase cache)
+    was this one inverted boolean, not Bluetooth, ALSA, systemd or telemetry. The unit tests failed
+    to catch it because they asserted the same wrong polarity (stop{false} for the success path);
+    the corrected tests now pin the real contract (running{true}).
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/sink_watchdog.hpp
+    - Lumina-BETA-RPI-2W/src/audio/sink_watchdog.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_sink_watchdog.cpp
+    - Lumina-BETA-RPI-2W/docs/BLUETOOTH.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host + aarch64 and run ctest --preset host. On-device: buds off => WARN retries every
+    3 s then ERROR + power-off (or exit 2); buds on => "ALSA sink ready" then "audio sink ready";
+    Ctrl-C during the wait logs the signal and exits 0. Then re-measure NFR-04 with lumina.service.
+
+# ---------------------------------------------------------------------------
+# CHG-0080 — Disable ONNX Runtime telemetry (INV-003 / INV-034)
+# ---------------------------------------------------------------------------
+- id: CHG-0080
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-003, INV-022, INV-034, INV-070]
+  supersedes: null
+  summary: >-
+    The official ONNX Runtime prebuilt (1.30.0) that backs libpiper ships telemetry enabled and
+    POSTs to https://mobile.events.data.microsoft.com/OneCollector/1.0/. This appeared in strace as
+    repeated DNS (router) + HTTPS to Microsoft/Azure IPs (52.178.17.2, 20.42.73.25) with
+    /etc/ssl/certs reads, from ORT worker threads. PiperTts::load() now calls
+    setenv("ORT_DISABLE_TELEMETRY", "1", 1) before the first piper_create(), and scripts/lumina.service
+    sets the same variable; README documents the variable and a privacy/no-network note that points
+    at a strace -e trace=connect check.
+  rationale: >-
+    INV-003/INV-034 require that no camera data, face embeddings, audio or any other data leave the
+    device, and that the core path makes no cloud/network calls. ORT's POSIX provider latches the
+    ORT_DISABLE_TELEMETRY opt-out during telemetry initialization
+    (onnxruntime/core/platform/telemetry_environment.h, verified 2026-09-21), so the variable must be
+    set before ORT initializes - hence in PiperTts::load(), which is the single gateway to ORT for
+    every executable we build (lumina, lumina_bench_latency), rather than relying on each launcher.
+    Truthy values per ORT: 1/true/yes/on/y (case-insensitive).
+  files:
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.cpp
+    - Lumina-BETA-RPI-2W/scripts/lumina.service
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild and run: strace -f -e trace=connect ./lumina ... should show no AF_INET connects (only
+    AF_UNIX). If any remain, identify the library (the strings show mobile.events.data.microsoft.com
+    in libonnxruntime.so.1.30.0) and revisit; the env var must be set before ORT initialization.
+
+# ---------------------------------------------------------------------------
+# CHG-0081 — Record on-device verification of CHG-0079 (sink watchdog) + CHG-0080 (telemetry)
+# ---------------------------------------------------------------------------
+- id: CHG-0081
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-003, INV-034, INV-053, INV-070]
+  supersedes: null
+  summary: >-
+    Recorded the on-device verification of the sink-watchdog fix (CHG-0079) and the telemetry
+    disable (CHG-0080). Earbuds connected: `audio sink ready (attempt 1/60)` on the first try, then
+    the proximity/camera logs and `Lumina running`; detections, Spanish speech and the Safety
+    proximity phrase all worked (ToF alert event->speech-start 147 ms). Earbuds disconnected: 60 x
+    `audio sink unavailable (attempt n/60); retrying in 3000 ms` (180 s), then `audio sink
+    unavailable after 60 attempts (180 s)` and `requesting power-off: sudo -n systemctl poweroff
+    --no-wall`, after which the device powered off (the SSH session dropped) - also confirming the
+    sudoers rule. A reboot autostarted the runtime successfully. Telemetry: a strace -f -e
+    trace=connect run with only the in-process ORT_DISABLE_TELEMETRY (no launcher export) showed no
+    AF_INET connects, so the code-level disable is sufficient; the lumina.service Environment= line
+    is kept as belt-and-braces. Docs updated: docs/BLUETOOTH.md (a "Verified on-device" subsection),
+    docs/PERFORMANCE.md (new section 15), README.md (privacy + Run notes).
+  rationale: >-
+    INV-070 wants measurements recorded, and the previous entries left the verification in
+    follow_up. Capturing the exact observed strings and the power-off/autostart behavior makes the
+    fix reproducible and prevents re-investigating the (already root-caused) inverted-flag bug. The
+    telemetry result is the evidence that CHG-0080 works without relying on the launcher.
+  files:
+    - Lumina-BETA-RPI-2W/docs/BLUETOOTH.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Remaining Day-5 items: measure NFR-04 (power-on -> ready with lumina.service autostart), run the
+    1-hour soak (NFR-05), and write the end-to-end demo runbook (incl. live enrollment + restart).
+    Optional: the PERFORMANCE.md section 13 proximity cross-channel refinement.
+
+# ---------------------------------------------------------------------------
+# CHG-0082 — First cold-boot measurement of the autostart path; amend NFR-04 / INV-053
+# ---------------------------------------------------------------------------
+- id: CHG-0082
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-003, INV-014, INV-034, INV-052, INV-053, INV-070]
+  supersedes: null
+  summary: >-
+    Recorded the first cold-boot measurement with lumina.service enabled (NFR-04). systemd-analyze:
+    6.499 s kernel + 34.755 s userspace = 41.254 s. Monotonic milestones: lumina.service started
+    17.982 s; ncnn detector 20.120; Piper ready 34.586; YuNet+SFace 38.427; FaceStore (1 person,
+    4 emb.) 38.454; phrase cache + sink-wait start 38.823; ALSA fail attempt 1/60 39.028; A2DP PCM
+    appears 60.115; ALSA sink ready (attempt 8/60) 60.298; VL53L0X 60.368; libcamera streaming ~61;
+    "Lumina running" ~62 s. Decomposition: ~18 s boot-to-unit + ~21 s app init (Piper 14.5 dominant)
+    + ~21.5 s waiting for the BlueALSA PCM (earbuds reconnected late) + ~1.7 s tail ~= 62 s. All
+    subsystems loaded in the service context; VmRSS 223256 kB ~= 218 MiB, VmSize ~= 1.08 GiB
+    (INV-052). systemd-analyze blame: NetworkManager 23.663 s (kept), e2scrub_reap 2.967,
+    dev-mmcblk0p2 2.580, rpi-resize-swap-file 2.472; NM's cost is the pre-association wait, DHCP ~2 s.
+    Noted the RTC-less wall-clock jump (NTP +107 s between monotonic 45 s and 48 s), so startup timing
+    must use monotonic. Per user decision the ~62 s cold boot is accepted as good; NFR-04/INV-053 were
+    amended from ~30 s to ~60 s (cold) / ~40 s (earbuds already connected). Docs updated:
+    docs/PERFORMANCE.md (14.1 second cold boot + NM-retained decision, 14.2 RSS reconciliation, 14.3
+    verdict, new 14.4 timeline, 15 cross-ref), docs/BLUETOOTH.md (cold-boot bullet + demo tip),
+    SPECS.md (NFR-04 amended), INVARIANTS.md (INV-053 statement + amendment note + summary table),
+    README.md (first-boot expectation).
+  rationale: >-
+    NFR-04 was the last unmeasured startup number and the reason the autostart unit exists. The
+    measurement shows the unit starts at ~18 s, the app spends ~21 s loading models and ~21.5 s
+    waiting for the earbuds, so power-on -> ready is ~62 s. Only the model load is Lumina's own; the
+    sink wait is the earbuds' reconnect latency and collapses when they are connected at boot. The
+    user explicitly stated the original ~30 s was an estimate, that ~62 s is acceptable in real
+    conditions, and to keep it; INV-053 (TARGET: "Deviation is allowed only if reported and approved")
+    is therefore amended with this approved deviation, and the SPECS.md NFR-04 target follows. The
+    module-load measurement also confirms the full stack loads in the service context, so the earlier
+    120 MB log is a low-residency outlier rather than a missing subsystem. Recording the exact
+    monotonic chain prevents re-deriving it and feeds the demo runbook (power the earbuds on first).
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/docs/BLUETOOTH.md
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Live --camera enrollment test next (flow B: enroll, then restart lumina so the greeting warms).
+    Then the Day-5 end-to-end demo runbook (power the earbuds on before the Pi; ready ~62 s cold /
+    ~40 s warm) and the NFR-05 1-hour soak. No boot optimization planned.
+
+# ---------------------------------------------------------------------------
+# CHG-0083 — Document on-device verification of live camera enrollment (FR-04) + recognition
+# ---------------------------------------------------------------------------
+- id: CHG-0083
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-030, INV-040, INV-041, INV-070]
+  supersedes: null
+  summary: >-
+    Documented the first on-device verification of the live --camera enrollment path (FR-04) and
+    recognition (FR-03.2). Workflow used: stop lumina.service (frees libcamera, which is single
+    client) -> scripts/enroll_face.sh "<nombre>" --camera -> restart lumina. The tool captured
+    embeddings of the largest face and appended them to models/face/embeddings.bin; on restart the
+    FaceStore reloaded and the greeting pre-warmed; presenting the enrolled person produced the
+    "<nombre> está enfrente" greeting. Created docs/FACE.md: the operator runbook (photo and live
+    camera paths, exact commands, verification, troubleshooting, verification log). Linked it from
+    README.md and added a Verified line to SPECS.md FR-04. Updated RAW_PLAN.md: the Day-4 face item
+    is now "verified on-device (CHG-0073 photos, CHG-0083 live camera)" and the open item is reduced
+    to enrolling the remaining people.
+  rationale: >-
+    Live camera enrollment was the last face-path operation not exercised on the device; the user
+    confirmed it and recognition both behaved as expected. Capturing the runbook (and especially the
+    operational gotchas: the service holds the camera, run as the 'lumina' user so $HOME/lumina
+    resolves, the 60 s capture deadline, and the append-only store with no delete) makes the showcase
+    enrollment repeatable without re-deriving it. Recognition working closes FR-03.2; FR-03.3
+    (non-enrolled not greeted) was already verified in CHG-0073.
+  files:
+    - Lumina-BETA-RPI-2W/docs/FACE.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Enroll the remaining people (FR-03.1 asks for 3-4). Optionally record the exact person names and
+    per-person embedding counts in docs/FACE.md section 6. Then the Day-5 demo runbook and the NFR-05
+    1-hour soak.
 ```

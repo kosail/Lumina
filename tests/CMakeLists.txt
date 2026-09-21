@@ -30,6 +30,7 @@ if(LUMINA_BUILD_TESTS)
         test_face_greeter.cpp
         test_image_list.cpp
         test_proximity.cpp
+        test_sink_watchdog.cpp
         test_yolo11_decode.cpp
         test_describer.cpp
         test_caching_tts.cpp)

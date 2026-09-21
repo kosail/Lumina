@@ -177,3 +177,29 @@ TEST_CASE("clampConfig repairs out-of-range proximity fields") {
     CHECK(fixed.proximityPollMs == 20);
     CHECK(isValid(fixed));
 }
+
+TEST_CASE("audio sink wait defaults match FR-06.1") {
+    const auto config = defaultConfig();
+    CHECK(config.audioSinkRetryIntervalMs == 3000);
+    CHECK(config.audioSinkMaxRetries == 60);  // 60 x 3 s = 3 minutes
+    CHECK(config.audioSinkShutdownOnFailure);
+    CHECK(isValid(config));
+}
+
+TEST_CASE("clampConfig repairs out-of-range audio sink fields") {
+    auto config = defaultConfig();
+    config.audioSinkRetryIntervalMs = 0;   // below the 100 ms floor
+    config.audioSinkMaxRetries = 0;        // below the 1-attempt floor
+
+    auto fixed = clampConfig(config);
+    CHECK(fixed.audioSinkRetryIntervalMs == 100);
+    CHECK(fixed.audioSinkMaxRetries == 1);
+    CHECK(isValid(fixed));
+
+    config.audioSinkRetryIntervalMs = 999999;  // above the 60 s ceiling
+    config.audioSinkMaxRetries = 999999;       // above the attempt ceiling
+    fixed = clampConfig(config);
+    CHECK(fixed.audioSinkRetryIntervalMs == 60000);
+    CHECK(fixed.audioSinkMaxRetries == 10000);
+    CHECK(isValid(fixed));
+}

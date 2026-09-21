@@ -1,0 +1,43 @@
+# ---------------------------------------------------------------------------
+# lumina.service — autostart the Lúmina runtime at boot.
+#
+# This is a TEMPLATE. Install it with scripts/9-setup_autostart.sh, which
+# substitutes @LUMINA_USER@ and @LUMINA_HOME@ for this Pi and drops the result in
+# /etc/systemd/system/lumina.service. Do not copy it by hand (the placeholders
+# would remain literal).
+#
+# Design notes:
+#   - The runtime waits for the Bluetooth audio sink itself (up to 3 minutes,
+#     FR-06.1) and powers the device off on failure, so the unit is ordered after
+#     Bluetooth but does not depend on an already-connected earbud.
+#   - Exit code 2 is the deliberate "no audio sink" result; RestartPreventExitStatus
+#     stops systemd from restart-looping it. Real crashes still restart.
+#   - `User=` gets the user's supplementary groups (video/i2c/audio), which is how
+#     the camera, the VL53L0X and bluealsa are reached without root.
+# ---------------------------------------------------------------------------
+
+[Unit]
+Description=Lúmina runtime (edge-AI assistive device)
+Documentation=file:@LUMINA_HOME@/docs/BLUETOOTH.md
+Wants=bluetooth.service
+After=bluetooth.service bluealsa.service
+
+[Service]
+Type=simple
+User=@LUMINA_USER@
+WorkingDirectory=@LUMINA_HOME@
+Environment=LD_LIBRARY_PATH=@LUMINA_HOME@/third_party/libpiper/lib
+Environment=PIPER_NUM_THREADS=3
+Environment=LUMINA_LOG_LEVEL=info
+# Privacy (INV-003/INV-034): the ONNX Runtime prebuilt ships telemetry to
+# mobile.events.data.microsoft.com; keep it disabled. The runtime also sets this
+# in-process before ONNX Runtime initializes (CHG-0080); this is belt-and-braces.
+Environment=ORT_DISABLE_TELEMETRY=1
+ExecStart=@LUMINA_HOME@/lumina models/yolo11n_ncnn_320x256 models/voices/es_MX-claude-high.onnx espeak-ng-data
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=10
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

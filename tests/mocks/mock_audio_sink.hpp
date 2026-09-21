@@ -18,6 +18,15 @@ public:
 
     [[nodiscard]] bool open() override
     {
+        ++m_openCount;
+        // Simulate a device that is not there yet: fail the first N attempts, then
+        // succeed. Tests that never call setOpenFailuresBeforeSuccess() keep the
+        // historical behavior (open() returns m_openResult immediately).
+        if (m_openFailuresRemaining > 0) {
+            --m_openFailuresRemaining;
+            m_open = false;
+            return false;
+        }
         m_open = m_openResult;
         return m_open;
     }
@@ -41,7 +50,11 @@ public:
     // ---- test helpers -------------------------------------------------------
     void setOpenResult(bool value) { m_openResult = value; }
     void setWriteResult(bool value) { m_writeResult = value; }
+    // Make the next `count` open() calls fail before honoring m_openResult, so a
+    // test can exercise the sink watchdog's retry path deterministically.
+    void setOpenFailuresBeforeSuccess(int count) { m_openFailuresRemaining = count; }
     [[nodiscard]] bool isOpen() const noexcept { return m_open; }
+    [[nodiscard]] std::size_t openCount() const noexcept { return m_openCount; }
     [[nodiscard]] std::size_t writeCount() const noexcept { return m_writes.size(); }
     [[nodiscard]] std::size_t stopCount() const noexcept { return m_stopCount; }
     [[nodiscard]] std::size_t drainCount() const noexcept { return m_drainCount; }
@@ -64,6 +77,8 @@ private:
     bool m_open = false;
     bool m_openResult = true;
     bool m_writeResult = true;
+    std::size_t m_openCount = 0;
+    int m_openFailuresRemaining = 0;
 };
 
 } // namespace lumina::tests

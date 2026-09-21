@@ -123,7 +123,7 @@ models/
   voices/                  es_MX-*.onnx, es_MX-*.onnx.json
 src/
   main.cpp
-  core/                    bounded_queue.hpp, frame.hpp, event.hpp, config.hpp, time.hpp
+  core/                    bounded_queue.hpp, frame.hpp, event.hpp, config.hpp, time.hpp, power.{hpp,cpp}
   capture/camera.{hpp,cpp}                # libcamera OV5647
   vision/detector.{hpp,cpp}               # NCNN YOLO + class subset + ES labels
   vision/face.{hpp,cpp}                   # YuNet + embedder + enroll store
@@ -134,12 +134,13 @@ src/
   alerts/arbiter.{hpp,cpp}                # priority, cooldown, preemption
   audio/piper_tts.{hpp,cpp}               # libpiper wrapper
   audio/bluealsa_sink.{hpp,cpp}           # ALSA write to bluealsa
+  audio/sink_watchdog.{hpp,cpp}           # FR-06.1: wait for the sink, retry, power off
   i18n/es.{hpp,cpp}                       # message catalog
   telemetry/udp.{hpp,cpp}                 # optional
 scripts/
-  cross_build.sh, export_models.sh, enroll_face.sh, bt_setup.sh
+  cross_build.sh, export_models.sh, enroll_face.sh, bt_setup.sh, 9-setup_autostart.sh, lumina.service
 tests/
-  bench_fps.cpp, bench_latency.cpp
+  bench_fps.cpp, bench_latency.cpp, test_sink_watchdog.cpp
 docs/
   RAW_PLAN.md (this file)
 ```
@@ -229,13 +230,21 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
 
 ---
 
-## 9. BLUETOOTH AUDIO SETUP
+## 9. BLUETOOTH AUDIO SETUP  (IMPLEMENTED 2026-09-21, CHG-0077; see docs/BLUETOOTH.md)
 
 - Pair + `trust` buds; enable autoconnect (module-switch-on-connect / WirePlumber).
 - Disable module-suspend-on-idle (prevents first-word delay/stutter).
 - Route Piper PCM to bluealsa PCM; optionally tune `pactl set-port-latency-offset`.
 - Expected added latency 150-300ms; acceptable for description, marginal for safety
   (proximity ToF alert mitigates).
+- System layer `scripts/bt_setup.sh`: discover the single paired earbud (no hardcoded
+  MAC; `--mac`/`--pair` overrides), trust it, set `[Policy] AutoEnable=true`, optional
+  `lumina-bt-connect.service`.
+- Runtime: the sink watchdog retries `bluealsa` open() every 3 s, 60 attempts (3 min);
+  on exhaustion it powers the device off (or just stops the runtime if not permitted).
+  It never crashes on a missing sink (FR-06.1).
+- `scripts/9-setup_autostart.sh` + `scripts/lumina.service` autostart the runtime at
+  boot (After bluetooth.service; RestartPreventExitStatus=2).
 
 ---
 
@@ -284,7 +293,7 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
    speech thread), vendor cancellation into libpiper, or add an IR-only immediate tone. See
    docs/PERFORMANCE.md known limitations. A dual-voice fallback (claude-high warmed / ald-xlow
    misses) was measured (~3.4x faster misses, ~40 MB) but is deferred (CHG-0057).
-7. Day 4 (face recognition) — IMPLEMENTED (CHG-0059..0067); on-device verification pending.
+7. Day 4 (face recognition) — IMPLEMENTED (CHG-0059..0067); verified on-device (CHG-0073 photos, CHG-0083 live camera).
    Decisions locked: SFace fp32 + YuNet 2023mar (OpenCV 4.10); cosine threshold 0.363 + best-vs-
    second margin 0.05; 3 stable frames + 30 s/person cooldown; `lumina_enroll` from photos
    (recommended) or live camera, up to K=10 embeddings/person; store `models/face/embeddings.bin`;
@@ -300,7 +309,8 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
      for photos, `--camera` for live capture (needs LUMINA_ENABLE_LIBCAMERA).
    - Verify on-device (2026-09-20, CHG-0073): enrolled David Solís (4 photos) and greeted by name;
      a 7-min soak held RSS 287-288 MB flat, swap 29 MB flat, FPS 3.0-4.3, peak 58.5 °C, with no
-     camera timeout. Still open: reject non-enrolled, enroll the other 2 people.
+     camera timeout. Live **--camera** enrollment verified on-device (CHG-0083, runbook `docs/FACE.md`).
+Still open: enroll the remaining people.
    - Deferred fallback if RAM pressure (INV-052): int8bq SFace or MobileFaceNet-on-NCNN.
    - Memory hardening (CHG-0070..0072): downscale YuNet input to `faceDetectionSide` (320); system
      `gpu_mem=32` + zram + `vm.swappiness=10`/`page-cluster=0`/`watermark_boost_factor=0`; and in the

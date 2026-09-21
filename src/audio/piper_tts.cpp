@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdlib> // setenv: ONNX Runtime telemetry opt-out (INV-003/INV-034)
 #include <string>
 #include <utility>
 
@@ -66,6 +67,17 @@ bool PiperTts::load()
         m_impl->m_config.configPath.empty() ? nullptr : m_impl->m_config.configPath.c_str();
     const char* espeakData =
         m_impl->m_config.espeakDataDir.empty() ? nullptr : m_impl->m_config.espeakDataDir.c_str();
+
+    // Privacy (INV-003, INV-034; CHG-0080). The official ONNX Runtime prebuilt
+    // that backs libpiper ships telemetry enabled and POSTs to
+    // https://mobile.events.data.microsoft.com/OneCollector/1.0/. ORT's POSIX
+    // provider latches the ORT_DISABLE_TELEMETRY opt-out during initialization
+    // (see onnxruntime/core/platform/telemetry_environment.h), so it must be set
+    // before ORT first initializes — i.e. before the first piper_create(). Setting
+    // it here covers every executable that loads Piper (the runtime and the
+    // latency benchmark) without depending on the launcher exporting it. Truthy
+    // values per ORT: 1/true/yes/on/y (case-insensitive); overwrite=1 forces it.
+    ::setenv("ORT_DISABLE_TELEMETRY", "1", 1);
 
     m_impl->m_synth = piper_create(m_impl->m_config.modelPath.c_str(), configPath, espeakData);
     if (m_impl->m_synth == nullptr) {

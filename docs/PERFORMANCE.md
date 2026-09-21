@@ -481,6 +481,21 @@ this; `cloud-init` is a one‑time provisioning tool, unused on this unit).
   Wi‑Fi association/DHCP wait, and `network.target` + `ssh.service` both order after it.
 - **Power‑on → reachable SSH ≈ 30 s.**
 
+#### Second cold boot (2026-09-20, after CHG-0080)
+
+`systemd-analyze`: **6.499 s (kernel) + 34.755 s (userspace) = 41.254 s**; `multi-user.target` at
+34.754 s. This sample is ~5.6 s slower than the cloud-init-off baseline above, and the delta is
+**entirely `NetworkManager.service`** (19.4 -> 23.663 s); every other milestone is within ~0.05 s.
+The NM journal shows the Wi-Fi profile `netplan-wlan0-Totalplay-2.4G-f028` associating and receiving
+its DHCP lease (`192.168.100.36`) in ~2 s (22:38:23 -> 22:38:25), so NM's cost is mostly the wait
+*before* association, not DHCP. `systemd-analyze blame` also lists `e2scrub_reap.service` (2.967 s),
+`dev-mmcblk0p2.device` (2.580 s) and `rpi-resize-swap-file.service` (2.472 s), but none is on the
+runtime's path.
+
+- **Decision (user): keep `NetworkManager`.** Lumina needs no network (INV-003/INV-034), but NM is
+  required for SSH troubleshooting during the showcase, so its cost is accepted. NFR-04 is measured
+  from Lumina's own readiness (section 14.4), not from `multi-user.target`.
+
 ### 14.2 Lumina process startup
 
 Command (same config as §12, proximity enabled):
@@ -506,17 +521,79 @@ LD_LIBRARY_PATH=$PWD/third_party/libpiper/lib LUMINA_LOG_LEVEL=debug ./lumina \
 - **Piper model load (~13 s) is the single biggest chunk**, then face+store ~3 s and camera/ALSA
   ~1–2 s; proximity is ~instant and the phrase cache is warm (0 new).
 
-### 14.3 NFR‑04 verdict
+- **RSS across runs.** The manual run above measured 295 MB and the CHG-0081 verification
+  216-223 MB; the autostart run in section 14.4 measures **VmRSS ~= 218 MiB** with every subsystem
+  loaded (detector, Piper, YuNet+SFace, FaceStore, phrase cache, sink, VL53L0X, libcamera). RSS
+  varies with page residency (the ONNX Runtime / model mappings are reclaimed under memory
+  pressure); all values are well inside INV-052 (< ~450 MB). An earlier service boot that logged
+  120 MB is treated as a low-residency outlier, not a missing subsystem: section 14.4 confirms the
+  full stack loads.
 
-SPECS NFR‑04 asks for "ready … within ~30 s of power‑on". Counted from **power‑on** with the current
-**manual** launch (SSH in, then run `./lumina`):
+### 14.3 NFR-04 verdict
+
+NFR-04 (SHOULD) originally asked for "ready ... within ~30 s of power-on"; that figure was an
+initial estimate. The first measured cold boot with autostart (section 14.4) is **~62 s**,
+decomposed as:
 
 ```
-~30 s boot→SSH  +  ~18 s app load  ≈ 48 s   →  NFR‑04 (~30 s) NOT met as counted
+~18 s   power-on -> lumina.service started   (6.5 s kernel + ~11.5 s systemd)
+~21 s   app init                             (detector 2.1 + Piper 14.5 + face 3.8 + cache)
+~21.5 s wait for the BlueALSA PCM            (earbuds presented the A2DP sink at t ~ 60 s)
+~1.7 s  proximity + libcamera + "Lumina running"
+~62 s   power-on -> ready (cold)
 ```
 
-The app's own startup (~18 s) is fine; the gap is the serial boot + load. To meet NFR‑04 as written,
-`lumina` must **autostart** (a systemd unit) so its ~18 s load overlaps the remaining boot and lands
-~30–35 s, or the OS boot must shrink further. This is the open Day‑5 "startup readiness" item; no
-change was made here. NFR‑04 also names "Bluetooth audio connected", which depends on the
-BT‑autoconnect work (FR‑06.1, `scripts/bt_setup.sh` — not yet created).
+Only the middle portion is Lumina's own work; the sink wait is the **earbuds' reconnect latency**
+and collapses to ~0-3 s when they are already connected at boot (~40 s total), which the watchdog's
+3 s retries cover (FR-06.1, CHG-0077/0079). After this real measurement the target was **revised to
+~60 s** (INV-053 amended by CHG-0082); the user accepted ~62 s as good for the beta and no further
+boot optimization is planned. (Historical: the earlier manual-launch count of ~30 s boot-to-SSH plus
+~18 s app ~= 48 s is superseded by the autostart measurement.)
+
+### 14.4 Autostart cold boot: power-on -> Lumina ready
+
+Cold boot on 2026-09-20 with `lumina.service` enabled. Monotonic timestamps from
+`journalctl -b -o short-monotonic -u lumina.service` (seconds since kernel start).
+
+| Milestone | t (s) |
+|---|---|
+| kernel startup done | 6.499 |
+| `lumina.service` started | 17.982 |
+| ncnn detector ready | 20.120 |
+| Piper ready | 34.586 |
+| YuNet + SFace loaded | 38.427 |
+| FaceStore (1 person, 4 emb.) | 38.454 |
+| phrase cache (0 new) + sink wait begin | 38.823 |
+| ALSA fail, watchdog attempt 1/60 | 39.028 |
+| A2DP PCM appears (earbuds) | 60.115 |
+| **ALSA sink ready (attempt 8/60)** | 60.298 |
+| VL53L0X ready | 60.368 |
+| libcamera streaming | ~61.0 |
+| **"Lumina running"** | **~62** |
+
+- **All subsystems loaded** in the service context (the list above is complete; no WARN fallback).
+- Resident memory: `VmRSS = 223256 kB ~= 218 MiB`, `VmSize ~= 1.08 GiB` (INV-052).
+- **Timing gotcha:** the Pi has no RTC; NTP corrected the wall clock by **+107 s** mid-boot
+  (`[22:38:26]` -> `[22:40:13]` between monotonic 45 s and 48 s), so the app's `[HH:MM:SS]` prefix is
+  unreliable around boot. Use the **monotonic** timestamps for all startup measurements.
+- **Demo implication:** power the earbuds on before (or at) the Pi so the ~21.5 s sink wait is
+  avoided; cold ready then drops to ~40 s.
+
+---
+
+## 15. Bluetooth sink wait and telemetry (FR-06.1; verified CHG-0081)
+
+`SinkWatchdog` was fixed in CHG-0079 (see `docs/BLUETOOTH.md` for the root cause) and verified
+on-device in CHG-0081.
+
+| Scenario | Observed |
+|---|---|
+| Earbuds connected at launch | `audio sink ready (attempt 1/60)` on the first try; runtime proceeds to camera/ToF and `Lúmina running` |
+| Earbuds disconnected | `audio sink unavailable (attempt n/60); retrying in 3000 ms` x 60 (180 s), then `audio sink unavailable after 60 attempts (180 s)` and `requesting power-off: sudo -n systemctl poweroff --no-wall` -> device powered off |
+| Ctrl-C during the wait | `audio sink wait interrupted by signal <n>`; clean exit 0 |
+| Reboot with `lumina.service` | autostart brings the runtime up end-to-end (cold-boot timings in section 14.4) |
+
+Telemetry (CHG-0080): a `strace -f -e trace=connect` with only the in-process
+`ORT_DISABLE_TELEMETRY=1` (no launcher export) showed **no AF_INET connects**, so the code-level
+disable in `src/audio/piper_tts.cpp` is sufficient; the `lumina.service` `Environment=` line is
+kept as belt-and-braces (INV-003/INV-034).

@@ -63,6 +63,7 @@ set(LUMINA_INFER_HEIGHT    "256"   CACHE STRING "Detector input height in pixels
 # ---------------------------------------------------------------------------
 add_library(lumina_core STATIC
     src/core/logging.cpp
+    src/core/power.cpp
     src/i18n/es.cpp
     src/vision/yolo11_decode.cpp
     src/vision/face_store.cpp
@@ -74,6 +75,7 @@ add_library(lumina_core STATIC
     src/app/face_greeter.cpp
     src/app/pipeline.cpp
     src/audio/caching_tts.cpp
+    src/audio/sink_watchdog.cpp
     src/sensors/proximity.cpp)
     # describer/pipeline/caching_tts/proximity use interfaces only -> host-buildable
 

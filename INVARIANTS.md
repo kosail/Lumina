@@ -537,13 +537,18 @@ embedder (MobileFaceNet) over SFace if pressure appears.
 ### INV-053 — Startup readiness  `TARGET`
 
 **Statement.** From power-on to "ready" (models loaded, Bluetooth audio connected) within
-**~30 s**.
+**~60 s** cold (~40 s when the earbuds are already connected at boot).
 
 **Rationale.** Demo and field usability.
 
 **Source.** `RAW_PLAN.md` (boot-time BT autoconnect requirement).
 
 **Changeability.** Report and get approval.
+
+**Amendment.** Amended by **CHG-0082** (2026-09-21). The original **~30 s** was an initial estimate;
+the first measured cold boot with autostart is **~62 s**, dominated by Piper model load (~14.5 s) and
+the earbuds' own reconnect wait (~21.5 s). The user accepted ~62 s as good for the beta and no
+further boot optimization is planned. See `docs/PERFORMANCE.md` section 14.
 
 ---
 
@@ -638,7 +643,7 @@ where they differ from Java.
 | INV-050  | TARGET   | Inference throughput ≥ 5 FPS @320/416 |
 | INV-051  | TARGET   | Spoken-alert latency < 600 ms |
 | INV-052  | TARGET   | Memory < ~450 MB |
-| INV-053  | TARGET   | Startup ready in ~30 s |
+| INV-053  | TARGET   | Startup ready in ~60 s (amended CHG-0082) |
 | INV-060  | HARD     | GPL-3.0 TTS risk accepted for beta |
 | INV-070  | PROCESS  | Every meaningful change is logged |
 | INV-071  | PROCESS  | 6-day deadline and Day-2 gate |

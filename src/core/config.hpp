@@ -86,6 +86,17 @@ struct Config {
     // Poll interval for the sensor thread. A VL53L0X single-shot measurement takes
     // ~33 ms, so 200 ms (5 Hz) is well within budget and leaves the CPU idle.
     int proximityPollMs = 200;
+    // --- Bluetooth audio sink availability (FR-06, INV-014) ------------------
+    // The `bluealsa` PCM only exists while the single paired earbud is connected,
+    // so a cold boot may need a few seconds before the sink can be opened. Instead
+    // of crashing, the runtime retries open() every `audioSinkRetryIntervalMs` up
+    // to `audioSinkMaxRetries` times (default 60 x 3000 ms = 3 minutes). See
+    // audio/sink_watchdog.*.
+    int audioSinkRetryIntervalMs = 3000;    // pause between open() attempts
+    int audioSinkMaxRetries = 60;           // attempts before giving up (FR-06.1)
+    // When the budget is exhausted the device cannot be used as intended, so the
+    // runtime requests a host power-off; set false to only stop the runtime.
+    bool audioSinkShutdownOnFailure = true;
 };
 
 // The approved detection input sizes (width x height), in preference order. The
@@ -130,6 +141,9 @@ struct Config {
     // Clamp release AFTER threshold so the hysteresis band is never inverted.
     config.proximityReleaseM = std::clamp(config.proximityReleaseM, config.proximityThresholdM, 5.0F);
     config.proximityPollMs = std::clamp(config.proximityPollMs, 20, 5000);
+    // A zero interval would busy-loop open() attempts; floor at 100 ms.
+    config.audioSinkRetryIntervalMs = std::clamp(config.audioSinkRetryIntervalMs, 100, 60000);
+    config.audioSinkMaxRetries = std::clamp(config.audioSinkMaxRetries, 1, 10000);
     config.faceMatchThreshold = std::clamp(config.faceMatchThreshold, 0.0F, 1.0F);
     config.faceMatchMargin = std::clamp(config.faceMatchMargin, 0.0F, 1.0F);
     return config;
@@ -156,6 +170,8 @@ struct Config {
            config.proximityReleaseM >= config.proximityThresholdM &&
            config.proximityReleaseM <= 5.0F &&
            config.proximityPollMs >= 20 && config.proximityPollMs <= 5000 &&
+           config.audioSinkRetryIntervalMs >= 100 && config.audioSinkRetryIntervalMs <= 60000 &&
+           config.audioSinkMaxRetries >= 1 && config.audioSinkMaxRetries <= 10000 &&
            config.faceMatchThreshold >= 0.0F && config.faceMatchThreshold <= 1.0F &&
            config.faceMatchMargin >= 0.0F && config.faceMatchMargin <= 1.0F;
 }

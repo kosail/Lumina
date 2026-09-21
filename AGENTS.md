@@ -111,7 +111,7 @@ Lumina-BETA-RPI-2W/
     app/                     # pipeline orchestrator + Spanish describer
     i18n/                    # es message catalog
     telemetry/               # udp (optional, off by default)
-  scripts/                   # 1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, 7-setup_i2c.sh, 8-fetch_face_models.sh, enroll_face.sh, bt_setup.sh
+  scripts/                   # 1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, 7-setup_i2c.sh, 8-fetch_face_models.sh, enroll_face.sh, bt_setup.sh, 9-setup_autostart.sh, lumina.service
   tests/                     # doctest unit tests + bench targets
   docs/                      # design notes (CROSS_COMPILE.md, PERFORMANCE.md)
 ```
