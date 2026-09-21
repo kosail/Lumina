@@ -55,6 +55,11 @@ struct Config {
     bool faceEnabled = true;
     int faceIntervalMs = 500;                         // min gap between face attempts
     int faceGreetingCooldownMs = 30000;               // per-person re-greet cooldown
+    // While any person is inside their greeting cooldown, multiply faceIntervalMs
+    // by this factor (CHG-0071). A greeted person does not need the heavy SFace
+    // inference at full rate, and slowing it down cuts the OpenCV DNN churn that
+    // tips the ~447 MB board into swap. 6 turns the 500 ms base into 3 s.
+    int faceCooldownBackoffFactor = 6;
     // A person must cover at least this fraction of the frame (box area / frame
     // area) before we attempt recognition, so distant faces are not probed.
     float faceMinBoxFraction = 0.04F;
@@ -67,6 +72,20 @@ struct Config {
     // 415 MB Pi and starves the camera (INV-052, CHG-0070). 320 keeps faces in
     // YuNet's reliable range for a person covering >= faceMinBoxFraction.
     int faceDetectionSide = 320;
+    // --- Front proximity sensor (VL53L0X, FR-10 / INV-013) -------------------
+    // Whether to construct the real sensor at startup. When false, or when the
+    // build has no proximity support, the factory returns NullProximitySensor and
+    // behavior is identical to the camera-only beta (INV-033).
+    bool proximityEnabled = true;
+    // A reading at or below this many metres is an imminent obstacle and raises a
+    // Safety-priority alert (FR-10). 0.8 m is roughly one walking step.
+    float proximityThresholdM = 0.8F;
+    // Hysteresis: the "close" state clears only once the distance rises above
+    // this, so a reading hovering at the threshold cannot flap the alert.
+    float proximityReleaseM = 1.2F;
+    // Poll interval for the sensor thread. A VL53L0X single-shot measurement takes
+    // ~33 ms, so 200 ms (5 Hz) is well within budget and leaves the CPU idle.
+    int proximityPollMs = 200;
 };
 
 // The approved detection input sizes (width x height), in preference order. The
@@ -100,11 +119,17 @@ struct Config {
     config.faceIntervalMs = std::clamp(config.faceIntervalMs, 100, 60000);
     // A 0 ms cooldown would greet a person continuously; floor at 1 s.
     config.faceGreetingCooldownMs = std::clamp(config.faceGreetingCooldownMs, 1000, 3600000);
+    // 1 = no back-off; a huge factor would effectively disable re-recognition.
+    config.faceCooldownBackoffFactor = std::clamp(config.faceCooldownBackoffFactor, 1, 60);
     config.faceMinBoxFraction = std::clamp(config.faceMinBoxFraction, 0.0F, 1.0F);
     // A face ROI below 0.1 would crop away almost everything; 1.0 is the full frame.
     config.faceRoiFraction = std::clamp(config.faceRoiFraction, 0.1F, 1.0F);
     // YuNet's usable range is small; clamp the detection side to a sane band.
     config.faceDetectionSide = std::clamp(config.faceDetectionSide, 160, 640);
+    config.proximityThresholdM = std::clamp(config.proximityThresholdM, 0.05F, 5.0F);
+    // Clamp release AFTER threshold so the hysteresis band is never inverted.
+    config.proximityReleaseM = std::clamp(config.proximityReleaseM, config.proximityThresholdM, 5.0F);
+    config.proximityPollMs = std::clamp(config.proximityPollMs, 20, 5000);
     config.faceMatchThreshold = std::clamp(config.faceMatchThreshold, 0.0F, 1.0F);
     config.faceMatchMargin = std::clamp(config.faceMatchMargin, 0.0F, 1.0F);
     return config;
@@ -123,9 +148,14 @@ struct Config {
            config.faceStableFrames >= 1 && config.faceStableFrames <= 30 &&
            config.faceIntervalMs >= 100 && config.faceIntervalMs <= 60000 &&
            config.faceGreetingCooldownMs >= 1000 && config.faceGreetingCooldownMs <= 3600000 &&
+           config.faceCooldownBackoffFactor >= 1 && config.faceCooldownBackoffFactor <= 60 &&
            config.faceMinBoxFraction >= 0.0F && config.faceMinBoxFraction <= 1.0F &&
            config.faceRoiFraction >= 0.1F && config.faceRoiFraction <= 1.0F &&
            config.faceDetectionSide >= 160 && config.faceDetectionSide <= 640 &&
+           config.proximityThresholdM >= 0.05F && config.proximityThresholdM <= 5.0F &&
+           config.proximityReleaseM >= config.proximityThresholdM &&
+           config.proximityReleaseM <= 5.0F &&
+           config.proximityPollMs >= 20 && config.proximityPollMs <= 5000 &&
            config.faceMatchThreshold >= 0.0F && config.faceMatchThreshold <= 1.0F &&
            config.faceMatchMargin >= 0.0F && config.faceMatchMargin <= 1.0F;
 }

@@ -171,10 +171,19 @@ Runtime environment variables (all optional):
 
 ### Memory on the Pi Zero 2 W
 
-The board exposes only ~415 MB usable RAM. Face detection is downscaled to `faceDetectionSide`
-(default 320) to avoid SD swap; see `docs/PERFORMANCE.md` §12. If the system still swaps under load,
-lower the GPU split (`gpu_mem=64` in `/boot/firmware/config.txt`) and/or use **zram** instead of SD
-swap — both free headroom for the camera and speech pipeline.
+The board is memory-bound: with `gpu_mem=32` it has only ~447 MB usable RAM, and the runtime with
+face recognition settles around ~289 MB RSS. Face detection is downscaled to `faceDetectionSide`
+(default 320) and face inference backs off while a person is on greeting cooldown; see
+`docs/PERFORMANCE.md` §12.
+
+Recommended system tuning:
+- Set `gpu_mem=32` in `/boot/firmware/config.txt` (frees RAM for the CPU side).
+- Use **zram** instead of SD swap (`zram-tools`, `PERCENTAGE=50`); confirm `swapon --show` lists only
+  `/dev/zram0`.
+- Add `/etc/sysctl.d/99-lumina.conf` with `vm.swappiness=10`, `vm.page-cluster=0`,
+  `vm.watermark_boost_factor=0`, then `sudo sysctl --system`.
+- Disable unneeded services (`avahi-daemon`, `cups`, `triggerhappy`, `ModemManager`); keep
+  `bluetooth` for the earbuds.
 
 ## Testing and benchmarks
 
@@ -189,7 +198,7 @@ swap — both free headroom for the camera and speech pipeline.
 3. Face enrollment and recognition (Day 4). — **implemented; on-device verification pending**
 4. Boot-time Bluetooth autoconnect, soak testing, demo hardening.
 5. Optional UDP telemetry (only after everything else passes).
-6. Front VL53L0X proximity alert once the core is green; rear sensor deferred to the very end (`docs/PROXIMITY.md`).
+6. Front VL53L0X proximity alert — **implemented** (FR-10, `-DLUMINA_ENABLE_PROXIMITY=ON`, CHG-0074); rear sensor deferred to the very end (`docs/PROXIMITY.md`).
 
 ## Face enrollment (FR-04)
 

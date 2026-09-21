@@ -68,6 +68,25 @@ public:
             return false;
         }
 
+        // Warm both networks once, while the system is still idle. The very first
+        // real inference otherwise allocates all the DNN layers at once (measured
+        // ~1.7-3.3 s on the Pi, CHG-0071) while the camera and Piper are already
+        // running, which spikes memory and can tip the ~447 MB board into swap.
+        // Running a blank frame here moves that one-off allocation to startup.
+        try {
+            cv::Mat blank(240, 320, CV_8UC3, cv::Scalar(0, 0, 0));
+            cv::Mat faces;
+            m_detector->setInputSize(blank.size());  // YuNet layer alloc
+            m_detector->detect(blank, faces);
+            m_lastInputSize = blank.size();  // the live 640x480 frame downscales to this
+            cv::Mat aligned(112, 112, CV_8UC3, cv::Scalar(0, 0, 0));
+            cv::Mat feature;
+            m_sface->feature(aligned, feature);  // SFace's heavy layer alloc
+        } catch (const cv::Exception& error) {
+            // Non-fatal: the first real inference just pays the allocation instead.
+            LUMINA_LOG_WARN("face: warm-up failed ({}); continuing", error.what());
+        }
+
         LUMINA_LOG_INFO("face: YuNet + SFace loaded");
         return true;
     }

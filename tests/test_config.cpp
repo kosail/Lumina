@@ -131,6 +131,7 @@ TEST_CASE("face defaults match the approved Day-4 values") {
     CHECK(config.faceIntervalMs == 500);
     CHECK(config.faceGreetingCooldownMs == 30000);
     CHECK(config.faceDetectionSide == 320);
+    CHECK(config.faceCooldownBackoffFactor == 6);
     CHECK(isValid(config));
 }
 
@@ -142,6 +143,7 @@ TEST_CASE("clampConfig repairs out-of-range face fields") {
     config.faceIntervalMs = 0;          // below the 100 ms floor (INV-050)
     config.faceGreetingCooldownMs = 0;  // below the 1 s floor
     config.faceDetectionSide = 10;      // below the 160 px floor
+    config.faceCooldownBackoffFactor = 0;  // below the factor-1 floor
 
     const auto fixed = clampConfig(config);
     CHECK(fixed.faceMatchThreshold == doctest::Approx(1.0F));
@@ -150,5 +152,28 @@ TEST_CASE("clampConfig repairs out-of-range face fields") {
     CHECK(fixed.faceIntervalMs == 100);
     CHECK(fixed.faceGreetingCooldownMs == 1000);
     CHECK(fixed.faceDetectionSide == 160);
+    CHECK(fixed.faceCooldownBackoffFactor == 1);
+    CHECK(isValid(fixed));
+}
+
+TEST_CASE("proximity defaults match the approved FR-10 values") {
+    const auto config = defaultConfig();
+    CHECK(config.proximityEnabled);
+    CHECK(config.proximityThresholdM == doctest::Approx(0.8F));
+    CHECK(config.proximityReleaseM == doctest::Approx(1.2F));
+    CHECK(config.proximityPollMs == 200);
+    CHECK(isValid(config));
+}
+
+TEST_CASE("clampConfig repairs out-of-range proximity fields") {
+    auto config = defaultConfig();
+    config.proximityThresholdM = 0.0F;   // below the 0.05 m floor
+    config.proximityReleaseM = 0.0F;     // must stay >= threshold
+    config.proximityPollMs = 0;          // below the 20 ms floor
+
+    const auto fixed = clampConfig(config);
+    CHECK(fixed.proximityThresholdM == doctest::Approx(0.05F));
+    CHECK(fixed.proximityReleaseM == doctest::Approx(0.05F));  // clamped up to threshold
+    CHECK(fixed.proximityPollMs == 20);
     CHECK(isValid(fixed));
 }

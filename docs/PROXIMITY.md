@@ -5,8 +5,8 @@
 >
 > **Scope:** **one VL53L0X, mounted facing forward.** A second sensor is kept as a spare for a
 > **rear** sensor that is **fully deferred** to the very end of the project — see the
-> **Appendix**. The runtime driver is **Phase C (planned, after Day 4)** and is not implemented
-> yet (`INVARIANTS.md` → INV-013, INV-033, INV-075; `CHANGELOG.md`).
+> **Appendix**. The runtime driver is **implemented (Phase C, CHG-0074)**; build with
+> `-DLUMINA_ENABLE_PROXIMITY=ON` (`INVARIANTS.md` → INV-013, INV-033, INV-075).
 
 ---
 
@@ -135,26 +135,37 @@ if so, drive GPIO17 high (or temporarily tie `XSHUT` to 3V3).
 
 ---
 
-## 7. Software integration (Phase C — planned)
+## 7. Software integration (Phase C — implemented, CHG-0074)
 
 ```
 src/sensors/
   proximity.hpp                # IProximitySensor, NullProximitySensor, factory, ProximityReading
-  vl53l0x_proximity.{hpp,cpp}  # i2c-dev (open/ioctl/read) + XSHUT (GPIO17) reset
+  proximity.cpp                # factory: Null unless LUMINA_HAS_PROXIMITY is defined
+  vl53l0x_proximity.{hpp,cpp}  # i2c-dev (open/ioctl/read); single-shot ranging
 ```
 
 - **Interface-first (INV-030):** the pipeline depends only on `IProximitySensor`. With
   `LUMINA_ENABLE_PROXIMITY=OFF` (host build) the factory returns `NullProximitySensor` and
-  behavior is identical to the current beta (INV-033).
-- **No new dependency (INV-022):** talk to `/dev/i2c-1` via `<linux/i2c-dev.h>` + `ioctl`, and to
-  the GPIO character device for `XSHUT`.
-- **Polling:** read the sensor a few times per second and expose the freshest reading.
-- **Alert:** a front obstacle within threshold triggers a short Spanish proximity phrase through
-  the arbiter (priority/cooldown/preemption, FR-10/INV-032).
-- **Fusion:** `processing/distance` combines the true ToF metres (short range) with the
-  bbox-size heuristic (long range / camera-only backup).
+  behavior is identical to the camera-only beta (INV-033).
+- **No new dependency (INV-022):** talks to `/dev/i2c-1` via `<linux/i2c-dev.h>` + `ioctl`
+  (`I2C_RDWR`). `XSHUT` (GPIO17) is **not** driven: Phase B verified the sensor answers at `0x29`
+  with `XSHUT` released.
+- **Init/ranging:** a C++ port of ST's VL53L0X API (UM2039) as reproduced by the Pololu driver
+  (consulted 2026-09-20): model-id check, DataInit, StaticInit (SPAD map + default tuning),
+  GPIO "new sample ready", timing-budget recalc, VHV + phase reference calibration, then
+  single-shot ranging. A reading is valid in ~30–2000 mm; outside that it is reported as "no
+  target".
+- **Polling:** the pipeline's `proximityLoop` thread reads a few times per second
+  (`proximityPollMs`, default 200 ms) and exposes the freshest reading to the inference thread.
+- **Alert:** a front obstacle within `proximityThresholdM` (default 0.8 m) raises a
+  `Priority::Safety`, pre-stabilized alert through the arbiter ("cuidado, obstáculo cerca.",
+  dedupKey `proximity:front`). Hysteresis (`proximityReleaseM`, default 1.2 m) prevents flapping.
+- **Fusion (FR-02.4):** the true ToF distance takes precedence at short range; while it reports a
+  close obstacle, `buildSceneAlert` suppresses the camera's own warning and narration so the two
+  channels cannot double.
 
-Config knobs to add: enable flag, bus path, address (`0x29`), threshold, poll rate.
+Config knobs (`core::Config`): `proximityEnabled`, `proximityThresholdM`, `proximityReleaseM`,
+`proximityPollMs` (bus path and address are fixed by the wiring, INV-075).
 
 ---
 

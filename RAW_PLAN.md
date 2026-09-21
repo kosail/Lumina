@@ -220,6 +220,7 @@ Day 3:   alert arbiter (priority/preemption/cooldown) + i18n + class labels.
 Day 4:   face enroll + recognition (YuNet + embedder), ROI crop, threshold tuning.
          *** IMPLEMENTED 2026-09-18 (CHG-0059..0065); on-device verification pending ***
 Day 5:   BT autoconnect at boot, thermal/power soak, end-to-end demo script.
+         Front VL53L0X proximity alert (FR-10) IMPLEMENTED 2026-09-20 (CHG-0074); on-device verify.
 Day 6:   optional UDP telemetry ONLY if all green; else buffer/fallback.
 Post-Day-4 (optional, Phase C): front VL53L0X proximity alert if the core is green.
 Very last (optional): rear VL53L0X sensor + front/rear distinction, after telemetry/nice-to-haves.
@@ -271,8 +272,9 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
 2. Verify IR LED board switching (GPIO/photoresistor) to control tint/power.
 3. Optional undistortion if face accuracy degrades at image edges.
 4. Proximity: Phase B COMPLETE (front wired, detected at 0x29, model ID 0xEE, XSHUT reset
-   verified); only the Phase C driver remains (post-Day-4). Rear sensor deferred to the very end
-   (after telemetry). See docs/PROXIMITY.md.
+   verified); Phase C driver IMPLEMENTED (CHG-0074: i2c-dev VL53L0X + Safety alert + FR-02.4
+   fusion behind `IProximitySensor`, gated by `LUMINA_ENABLE_PROXIMITY`); on-device verification
+   pending. Rear sensor deferred to the very end (after telemetry). See docs/PROXIMITY.md.
 5. Nice-to-have (deferred): re-enable motorcycle (COCO 3) and truck (COCO 7) narration — a
    config-only change since their i18n labels are kept dormant (OOS-09, INV-040).
 6. WARNING (later stage): live (uncached) Piper synthesis cannot be preempted — libpiper has no
@@ -296,5 +298,12 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
      counter.
    - Script: `scripts/enroll_face.sh` (+ `src/tools/enroll_face.cpp`); `--image`/`--images-dir`
      for photos, `--camera` for live capture (needs LUMINA_ENABLE_LIBCAMERA).
-   - Verify on-device: enroll 3 people, greet by name, reject non-enrolled, measure FPS/RSS.
+   - Verify on-device (2026-09-20, CHG-0073): enrolled David Solís (4 photos) and greeted by name;
+     a 7-min soak held RSS 287-288 MB flat, swap 29 MB flat, FPS 3.0-4.3, peak 58.5 °C, with no
+     camera timeout. Still open: reject non-enrolled, enroll the other 2 people.
    - Deferred fallback if RAM pressure (INV-052): int8bq SFace or MobileFaceNet-on-NCNN.
+   - Memory hardening (CHG-0070..0072): downscale YuNet input to `faceDetectionSide` (320); system
+     `gpu_mem=32` + zram + `vm.swappiness=10`/`page-cluster=0`/`watermark_boost_factor=0`; and in the
+     runtime, back off face inference during the greeting cooldown (`faceCooldownBackoffFactor`),
+     commit the cooldown only after the arbiter accepts the greeting, run NCNN on 3 threads, and warm
+     both DNNs at load. True working set ~289 MB vs 447 MB usable — keep this margin in mind.

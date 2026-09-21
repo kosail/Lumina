@@ -330,28 +330,99 @@ Build with `LUMINA_ENABLE_FACE=ON` (CHG‑0060).
   YuNet, because at full size YuNet's DNN workspace churned tens of MB per inference and forced SD
   swap (CHG‑0070).
 
-**Memory pressure on the 415 MB board (CHG‑0070).** The Zero 2 W exposes only ~415 MB usable RAM
-(GPU/firmware reserve ~97 MB). Idle ≈124 MB; lumina without face inference ≈201 MB RSS. Running
-YuNet at the full 640×480 pushed the system to ~388 MB used, **26 MB available, ~149 MB swap**, and
-the SD‑card swap stall made libcamera miss its 1 s V4L2 dequeue (`Camera frontend has timed out`).
-Mitigation: downscale the face input to `faceDetectionSide`. If headroom is still tight, also:
+**Memory pressure on the board (CHG‑0070/0071/0072).** The Zero 2 W is the binding constraint: with
+the default `gpu_mem` it exposes ~415 MB usable RAM; setting `gpu_mem=32` raises that to **447 MB**.
+Measured `free -m` on device: idle OS+daemons ≈145 MB; `lumina` with YOLO11n + Piper + libcamera +
+SFace settles at **~289 MB RSS** once SFace is resident. That is ~435 MB of 447 MB — only ~12 MB of
+real slack.
 
-- **Lower the GPU split** (headless): set `gpu_mem=64` (or lower) in `/boot/firmware/config.txt`
-  and reboot — frees tens of MB for the CPU side.
-- **Use zram instead of SD swap** (`zram-tools` / `dtoverlay`/systemd‑zram): compressed RAM swap is
-  far faster than SD, so a brief spike cannot stall the camera.
-- Raise `faceIntervalMs`, lower `faceDetectionSide` to 256, or reduce NCNN threads 4 → 3.
-- Larger change: smaller embedder (int8 SFace or MobileFaceNet‑on‑NCNN ~4 MB).
+Two back‑to‑back runs of the **same binary** behaved differently, which is the key finding:
 
-**To measure on‑device (Phase I, pending):**
-| Metric | Baseline (Day 3) | Day‑4 target |
-|--------|------------------|--------------|
-| Inference FPS (faces on) | 4.1–4.8 | stay within the INV‑050 caveat (no worse than ~4.0) |
-| RSS (faces on) | 184–189 MB | steady, and no swap growth during a run |
-| `face: identify` cost | — | < ~150 ms at 320 px |
-| Enroll (per person) | — | up to 10 embeddings captured in one run |
-| Recognition | — | enrolled greeted by name; non‑enrolled not named |
-| Persistence | — | `embeddings.bin` reloads after reboot |
+| Run | RSS | Swap used | Face inference | Outcome |
+|-----|-----|-----------|----------------|---------|
+| 1 | collapsed to 191 MB | 226 MB | 3.3 s first, then 1–3 s | froze ~30 s, camera V4L2 timeout |
+| 2 | steady 289 MB | 37 MB | ~820 ms with face, ~150 ms without | smooth; greeted David (0.456, 0.711) |
 
-**Fallbacks if RAM/FPS regress:** int8bq SFace (verify OpenCV 4.10 support first) → MobileFaceNet on
-NCNN (deferred). Record results here and append a CHANGELOG entry once measured.
+The kernel's page‑reclaim decision (keep the working set resident vs. evict anonymous pages to zram)
+is timing‑dependent at this margin. zram makes swap **fast** (compressed RAM, no SD stall) but does
+**not add RAM**, so it cannot rescue a genuinely over‑committed working set; in Run 1 the evicted
+SFace/YOLO pages ping‑ponged through zram and the CPU stalled in reclaim (temperature *fell*, since
+no work was completing). The runtime aggravated this by dispatching SFace every ~820 ms for the whole
+30 s cooldown, keeping the OpenCV DNN workspace hot and a core busy for no benefit.
+
+Code mitigations now in place (CHG‑0071):
+
+- **Cooldown back‑off:** while any person is inside their greeting cooldown, the face interval is
+  multiplied by `faceCooldownBackoffFactor` (default 6 → 3 s), cutting SFace calls ~7×.
+- **Two‑phase greeting:** the cooldown is committed only after the arbiter accepts the greeting, so a
+  greeting rejected by the global gap or a safety alert is retried, not lost for 30 s.
+- **NCNN threads 4 → 3:** one core stays free for OpenCV face inference, Piper and libcamera.
+- **Warm‑up at load:** both DNNs run once at startup so the first ~1.7–3.3 s allocation/initialisation
+  happens before the camera and Piper are contending.
+
+System mitigations (CHG‑0072), all on the Pi:
+
+- Verify **only zram** is swap (`swapon --show`, `zramctl`); if the old `dphys-swapfile` SD swap is
+  still enabled alongside zram, disable it.
+- Prefer **zram** over SD swap (`zram-tools`, `PERCENTAGE=50`): compressed RAM swap is far faster, so
+  a brief spike cannot stall the camera.
+- Reclaim tuning in `/etc/sysctl.d/99-lumina.conf`: `vm.swappiness=10`, `vm.page-cluster=0`,
+  `vm.watermark_boost_factor=0` — discourages premature eviction of live pages to zram (the Run 1
+  failure). Apply with `sudo sysctl --system`.
+- Free OS RAM: disable unneeded services (`avahi-daemon`, `cups`, `triggerhappy`, `ModemManager`);
+  keep `bluetooth` (the earbuds need it).
+- Lower `gpu_mem` (32 confirmed good) and/or `faceDetectionSide` to 256 to claw back more headroom.
+
+**Measured on‑device (2026‑09‑20, CHG‑0073).** Config: `gpu_mem=32` (447 MB usable), zram‑only swap
+(zstd, 447 MB), `vm.swappiness=10` / `vm.page-cluster=0` / `vm.watermark_boost_factor=0`, NCNN
+3 threads. Command:
+`LD_LIBRARY_PATH=$PWD/third_party/libpiper/lib LUMINA_LOG_LEVEL=debug ./lumina models/yolo11n_ncnn_320x256 models/voices/es_MX-claude-high.onnx espeak-ng-data`
+
+| Metric | Baseline (Day 3) | Day‑4 target | Measured (2026‑09‑20) |
+|--------|------------------|--------------|------------------------|
+| Inference FPS (faces on) | 4.1–4.8 | within the INV‑050 caveat (≥ ~4.0) | **3.0–4.3** (mostly ~3.8–4.1) |
+| RSS (faces on) | 184–189 MB | steady, no swap growth | **287–288 MB, flat** |
+| Swap | — | no growth during a run | **29 MB flat / 417 free** (7‑min soak) |
+| `face: identify` cost | — | — | **~142–171 ms no‑face / ~806–915 ms with‑face** |
+| Temperature | — | no throttling | **52.6 → 58.5 °C peak** (idle 34 °C) |
+| Camera | — | no V4L2 timeout | **stable** — no timeout in the soak |
+| Enroll (per person) | — | up to 10 embeddings in one run | 4 embeddings for David Solís (photos) |
+| Recognition | — | enrolled greeted; non‑enrolled not named | `David Solís` at 0.397 / 0.515; greeted twice, 48 s apart |
+| Persistence | — | `embeddings.bin` reloads after reboot | reloads (1 person, 4 embeddings) |
+
+**Soak (7 min 10 s, 15:23:46–15:30:56).** RSS held 287–288 MB, swap stayed at 29 MB, `free -m`
+`available` ~64 MB, and the temperature peaked at 58.5 °C (well below the ~80 °C throttle point);
+no camera timeout, clean Ctrl‑C. The earlier failure modes (OOM `Killed`, SD‑swap stall) did not
+recur. Two expected behaviors worth knowing: a person YOLO detects whose face YuNet cannot see keeps
+producing `identify … (no face)` at ~150 ms per attempt until the face is found, and a person who
+stays in view is re‑narrated roughly every ~6 s by the arbiter's per‑key dedup cooldown (Day‑3
+behavior, not a fault).
+
+**Open acceptance checks:** a non‑enrolled person must not be greeted, and the 3‑person enrollment
++ pre‑warm path should be exercised before the demo.
+
+**Fallbacks if RAM/FPS regress:** not needed at the current margin. If the working set grows (more
+enrolled people, a second model), the order is: int8bq SFace (verify OpenCV 4.10 support first) →
+MobileFaceNet on NCNN (deferred) → a smaller Piper voice. Record any change here and append a
+CHANGELOG entry.
+
+---
+
+## 13. Front proximity alert (FR-10, CHG-0074; measurements pending)
+
+Build with `-DLUMINA_ENABLE_PROXIMITY=ON`. A dedicated `proximityLoop` thread polls the VL53L0X at
+`proximityPollMs` (default 200 ms → 5 Hz). Each single-shot measurement takes ~33 ms, so the thread
+is idle most of the time and adds negligible CPU/memory. When a reading is at or below
+`proximityThresholdM` (default 0.8 m) it submits a `Priority::Safety` alert (pre-stabilized, so the
+arbiter's description-stability counter is untouched) that preempts any in-progress utterance; the
+phrase is the already pre-warmed `"cuidado, obstáculo cerca."` (`alertPhraseCatalog`), so the only
+added latency is the I²C read plus the Bluetooth hop.
+
+Fusion (FR-02.4): the freshest ToF distance is published atomically and passed to `buildSceneAlert`;
+while it reports a close obstacle the camera path is silent (no warning, no narration), so the two
+channels cannot double. When the ToF is far or has no target, the camera's bbox heuristic remains
+authoritative (it can catch objects the narrow ToF beam misses).
+
+**To measure on‑device:** wave a hand / approach a wall within ~0.8 m and confirm the Safety phrase
+speaks within the INV‑051 target; confirm no duplicate when a class obstacle is also detected;
+record RSS/temp and `proximity: obstacle at X.XX m` lines here.

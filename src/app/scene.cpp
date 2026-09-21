@@ -18,10 +18,19 @@ std::optional<alerts::Alert> buildSceneAlert(const std::vector<core::Detection>&
                                              const core::Config& config,
                                              int frameWidth,
                                              int frameHeight,
-                                             core::TimePoint capturedAt)
+                                             core::TimePoint capturedAt,
+                                             std::optional<float> proximityMeters)
 {
     const processing::DistanceThresholds thresholds{
         config.nearAreaFraction, config.midAreaFraction, config.pathCenterTolerance};
+
+    // Fusion (FR-02.4): the true front ToF reading takes precedence at short
+    // range. While it reports an obstacle at/under the threshold, the proximity
+    // thread has already spoken the Safety alert, so say nothing from the camera
+    // path this frame (warning or narration) to avoid competing with it.
+    if (proximityMeters.has_value() && *proximityMeters <= config.proximityThresholdM) {
+        return std::nullopt;
+    }
 
     // Is any obstacle class close AND in the user's path? Near wins over Mid.
     // The alert phrase is generic (it does not name the object), so we only need to

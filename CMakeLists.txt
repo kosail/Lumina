@@ -73,7 +73,9 @@ add_library(lumina_core STATIC
     src/app/describer.cpp
     src/app/face_greeter.cpp
     src/app/pipeline.cpp
-    src/audio/caching_tts.cpp)  # describer/pipeline/caching_tts use interfaces only -> host-buildable
+    src/audio/caching_tts.cpp
+    src/sensors/proximity.cpp)
+    # describer/pipeline/caching_tts/proximity use interfaces only -> host-buildable
 
 # Let sources include project headers as "core/..." rather than relative paths.
 # PUBLIC so anything linking lumina_core inherits the same include path.
@@ -183,6 +185,16 @@ if(LUMINA_ENABLE_FACE)
             "-Wl,-rpath-link,${LUMINA_SYSROOT}/usr/lib/aarch64-linux-gnu/lapack"
             "-Wl,--allow-shlib-undefined")
     endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Optional front proximity sensor (FR-10, INV-013/INV-033). The driver talks to
+# /dev/i2c-1 directly (no library, INV-022); only the concrete VL53L0X source is
+# gated, so the host build stays hardware-free and the factory returns Null.
+# ---------------------------------------------------------------------------
+if(LUMINA_ENABLE_PROXIMITY)
+    target_sources(lumina_core PRIVATE src/sensors/vl53l0x_proximity.cpp)
+    target_compile_definitions(lumina_core PUBLIC LUMINA_HAS_PROXIMITY=1)
 endif()
 
 # ---------------------------------------------------------------------------

@@ -51,12 +51,14 @@ Pipeline::Pipeline(capture::ICamera* camera,
                    audio::IAudioSink* sink,
                    core::Config config,
                    PipelineConfig pipelineConfig,
-                   vision::IFaceRecognizer* faceRecognizer)
+                   vision::IFaceRecognizer* faceRecognizer,
+                   sensors::IProximitySensor* proximity)
     : m_camera(camera)
     , m_detector(detector)
     , m_tts(tts)
     , m_sink(sink)
     , m_faceRecognizer(faceRecognizer)
+    , m_proximity(proximity)
     , m_config(std::move(config))
     , m_faceGreeter(FaceGreeterConfig{
           m_config.faceStableFrames,
@@ -100,6 +102,11 @@ bool Pipeline::start()
     if (m_faceRecognizer != nullptr) {
         m_faceThread = std::jthread([this](std::stop_token token) { faceLoop(token); });
     }
+    // The proximity worker runs only when a sensor was injected (host/disabled
+    // builds pass null and skip it entirely).
+    if (m_proximity != nullptr) {
+        m_proximityThread = std::jthread([this](std::stop_token token) { proximityLoop(token); });
+    }
     return true;
 }
 
@@ -115,6 +122,7 @@ void Pipeline::stop() noexcept
     m_inferenceThread.request_stop();
     m_speechThread.request_stop();
     m_faceThread.request_stop();
+    m_proximityThread.request_stop();
     m_arbiter.close();
     m_frames.close();
     m_faceFrames.close();
@@ -131,6 +139,9 @@ void Pipeline::stop() noexcept
     }
     if (m_faceThread.joinable()) {
         m_faceThread.join();
+    }
+    if (m_proximityThread.joinable()) {
+        m_proximityThread.join();
     }
 
     if (m_sink != nullptr) {
@@ -169,8 +180,13 @@ void Pipeline::inferenceLoop(std::stop_token stopToken)
         ++framesProcessed;
 
         const std::vector<core::Detection> detections = m_detector->detect(frame);
+        // Fuse the freshest front ToF distance (FR-02.4); negative means no reading.
+        const float proximity = m_proximityMeters.load(std::memory_order_relaxed);
+        const std::optional<float> proximityMeters =
+            proximity >= 0.0F ? std::optional<float>(proximity) : std::nullopt;
         const std::optional<alerts::Alert> alert =
-            buildSceneAlert(detections, m_config, frame.width, frame.height, frame.capturedAt);
+            buildSceneAlert(detections, m_config, frame.width, frame.height, frame.capturedAt,
+                            proximityMeters);
         if (alert) {
             // Logged for every candidate (accepted or not) so detection latency can
             // be read off the DEBUG stream (INV-051 / docs/PERFORMANCE.md).
@@ -249,6 +265,55 @@ void Pipeline::faceLoop(std::stop_token stopToken)
     }
 }
 
+void Pipeline::proximityLoop(std::stop_token stopToken)
+{
+    const auto pollInterval = std::chrono::milliseconds(m_config.proximityPollMs);
+    bool close = false;  // hysteresis state
+
+    while (!stopToken.stop_requested()) {
+        const std::optional<sensors::ProximityReading> reading = m_proximity->read();
+        if (reading.has_value() && reading->valid) {
+            m_proximityMeters.store(reading->meters, std::memory_order_relaxed);
+
+            // Hysteresis: latch "close" below the threshold and release it only
+            // once the distance climbs back above the release band, so a reading
+            // hovering at the threshold cannot flap the alert.
+            if (!close && reading->meters <= m_config.proximityThresholdM) {
+                close = true;
+            } else if (close && reading->meters >= m_config.proximityReleaseM) {
+                close = false;
+            }
+
+            if (close) {
+                // Imminent, class-agnostic obstacle: the highest priority. This is
+                // the low-latency safety channel (FR-10); the camera's duplicate
+                // warning is suppressed in buildSceneAlert (FR-02.4). The arbiter's
+                // per-key cooldown prevents repetition while the obstacle remains.
+                alerts::Alert alert;
+                alert.priority = alerts::Priority::Safety;
+                alert.source = alerts::Source::Proximity;
+                alert.text = i18n::proximityAlertPhrase(true);
+                alert.dedupKey = "proximity:front";
+                alert.detectedAt = core::now();
+                alert.preStabilized = true;  // one-shot sensor event, no frame stability
+                if (m_arbiter.submit(std::move(alert), core::now())) {
+                    LUMINA_LOG_INFO("proximity: obstacle at {:.2f} m", reading->meters);
+                }
+            }
+        } else {
+            // No valid reading: clear the fusion input. Do not reset `close`
+            // immediately, so a single dropped sample does not clear the latch.
+            m_proximityMeters.store(-1.0F, std::memory_order_relaxed);
+        }
+
+        // Sleep in short slices so stop() is responsive even for long poll rates.
+        const auto deadline = std::chrono::steady_clock::now() + pollInterval;
+        while (!stopToken.stop_requested() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+}
+
 void Pipeline::driveFaceRecognition(core::Frame frame, const std::vector<core::Detection>& detections)
 {
     if (m_faceRecognizer == nullptr) {
@@ -256,14 +321,17 @@ void Pipeline::driveFaceRecognition(core::Frame frame, const std::vector<core::D
     }
 
     // Collect any finished recognition and feed the greeting policy. This runs on
-    // the inference thread so the arbiter keeps a single producer (AGENTS §5).
+    // the inference thread; the arbiter is mutex-guarded and the proximity thread
+    // is the only other producer (it submits pre-stabilized Safety alerts, which
+    // never touch the description stability state).
     FaceResult result;
     while (m_faceResults.tryPop(result)) {
         std::optional<std::string> name;
         if (result.match.has_value()) {
             name = result.match->name;
         }
-        const std::optional<std::string> greeted = m_faceGreeter.observe(name, core::now());
+        const core::TimePoint observedAt = core::now();
+        const std::optional<std::string> greeted = m_faceGreeter.observe(name, observedAt);
         if (!greeted.has_value()) {
             continue;
         }
@@ -277,7 +345,13 @@ void Pipeline::driveFaceRecognition(core::Frame frame, const std::vector<core::D
         alert.preStabilized = true;  // the greeter already enforced its own stability
         LUMINA_LOG_INFO("face: recognized '{}' (similarity {:.3f})", *greeted,
                         result.match->similarity);
-        if (!m_arbiter.submit(std::move(alert), core::now())) {
+        if (m_arbiter.submit(std::move(alert), core::now())) {
+            // The greeting was accepted: start the person's cooldown now. Doing it
+            // only here (not inside observe()) means a greeting rejected by the
+            // arbiter's gap or a higher-priority alert is retried next pulse
+            // instead of silencing the person for the whole cooldown (CHG-0071).
+            m_faceGreeter.markGreeted(*greeted, observedAt);
+        } else {
             LUMINA_LOG_TRACE("face: greeting suppressed: '{}'", *greeted);
         }
     }
@@ -315,8 +389,16 @@ void Pipeline::driveFaceRecognition(core::Frame frame, const std::vector<core::D
     }
 
     // Throttle: at most one face attempt per faceIntervalMs (protects INV-050).
+    // While someone is inside their greeting cooldown, slow it further by
+    // faceCooldownBackoffFactor: re-recognizing an already-greeted person at full
+    // rate keeps SFace's DNN workspace hot and a core busy for no benefit, which
+    // is what pushed the ~447 MB board into swap (CHG-0071).
     const core::TimePoint now = core::now();
-    if ((now - m_lastFaceAttempt) < std::chrono::milliseconds(m_config.faceIntervalMs)) {
+    std::chrono::milliseconds interval(m_config.faceIntervalMs);
+    if (m_faceGreeter.hasActiveCooldown(now)) {
+        interval *= m_config.faceCooldownBackoffFactor;
+    }
+    if ((now - m_lastFaceAttempt) < interval) {
         return;
     }
     m_lastFaceAttempt = now;

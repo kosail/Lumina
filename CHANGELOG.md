@@ -2360,4 +2360,214 @@
     growth, camera stable, and "face: identify 320x240 took X ms" < ~150 ms. If swap still appears,
     lower faceDetectionSide to 256, raise faceIntervalMs, or reduce NCNN threads to 3; consider
     gpu_mem/zram. Record in docs/PERFORMANCE.md.
+
+# ---------------------------------------------------------------------------
+# CHG-0071 — Day 4: cut face-inference memory churn and fix cooldown commit
+# ---------------------------------------------------------------------------
+- id: CHG-0071
+  date: 2026-09-20
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-031, INV-050, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Follow-up to CHG-0070 after gpu_mem=32 + zram. Two runs of the SAME binary behaved
+    differently: one froze (RSS collapsed to 191 MB, swap ballooned to 226 MB, face inference
+    3.3 s, camera V4L2 timeout, inference loop silent ~30 s) and one ran perfectly (RSS 289 MB,
+    swap 37 MB, greeted David twice). The true working set (~289 MB) plus the OS (~146 MB) is
+    ~435 MB of the 447 MB ceiling, so whether the kernel keeps pages resident or prematurely
+    evicts them to zram is a reclaim race. The runtime aggravated it by running SFace every
+    ~820 ms while a person was on a 30 s greeting cooldown. Fixes: (1) FaceGreeter::observe()
+    no longer commits the cooldown; a new markGreeted() does, called only after the arbiter
+    accepts the greeting; (2) pipeline multiplies faceIntervalMs by faceCooldownBackoffFactor
+    (default 6) while any cooldown is active, cutting SFace calls ~7x; (3) NCNN detector
+    threads 4 -> 3 to reserve a core; (4) FaceEmbedder warms both DNNs at load so the first
+    ~1.7-3.3 s allocation happens before camera + Piper are contending.
+  rationale: >-
+    (1) fixes a real bug seen in the previous log: at 14:14:46 David was recognized but an
+    obstacle alert's global gap rejected the greeting, yet observe() had already started the
+    30 s cooldown, delaying the greeting to 14:15:17. (2) reduces the transient OpenCV DNN
+    peak frequency so it is less likely to overlap Piper/YOLO/camera peaks on a board with
+    ~12 MB of real slack. (3) gives OpenCV/audio/libcamera a core without starving YOLO.
+    (4) removes the mid-stream startup spike. Resident memory is unchanged (SFace stays
+    loaded); this targets the reclaim race.
+  files:
+    - Lumina-BETA-RPI-2W/src/app/face_greeter.hpp
+    - Lumina-BETA-RPI-2W/src/app/face_greeter.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/src/vision/face.cpp
+    - Lumina-BETA-RPI-2W/tests/test_face_greeter.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host + aarch64. On-device verify with a person: camera stays up, "available" stays
+    >= ~60 MB and swap does not grow, greeting heard within a few seconds, and re-greeting after
+    the 30 s cooldown. If it still swaps, fall back to a smaller embedder/voice (largest cut).
+
+# ---------------------------------------------------------------------------
+# CHG-0072 — Day 4: document Pi memory tuning (gpu_mem, zram, vm reclaim)
+# ---------------------------------------------------------------------------
+- id: CHG-0072
+  date: 2026-09-20
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Recorded the system-level tuning used on the Pi and why it is not sufficient alone.
+    gpu_mem=32 raised usable RAM from 415 to 447 MB; zram removed the microSD I/O stalls
+    (swap is now fast, compressed RAM) but does NOT add RAM, so it cannot rescue an
+    over-committed working set. Added guidance: verify only zram is swap (disable
+    dphys-swapfile if it is still enabled), tune vm.swappiness=10 / vm.page-cluster=0 /
+    vm.watermark_boost_factor=0 to avoid premature anonymous-page eviction, and disable
+    unneeded OS services.
+  rationale: >-
+    The observed Run 1 (thrash) vs Run 2 (smooth) difference with identical code shows the
+    outcome depends on reclaim timing at this margin. Documenting the tuning and the
+    reasoning prevents re-litigating it and gives the next operator the exact commands.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Confirm on the Pi that `swapon --show` lists only /dev/zram0 and that the sysctl values
+    took effect (`sysctl vm.swappiness vm.page-cluster`). Record the final free -m line here.
+
+# ---------------------------------------------------------------------------
+# CHG-0073 — Day 4: record on-device validation of CHG-0070..0072 (7-min soak)
+# ---------------------------------------------------------------------------
+- id: CHG-0073
+  date: 2026-09-20
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-031, INV-050, INV-052, INV-070]
+  supersedes: null
+  summary: >-
+    Recorded the on-device validation of the memory hardening (CHG-0070 downscale, CHG-0071 code
+    fixes, CHG-0072 system tuning). Config: gpu_mem=32 (447 MB usable), zram-only zstd swap,
+    vm.swappiness=10 / page-cluster=0 / watermark_boost_factor=0, NCNN 3 threads. A 7-min 10-s
+    soak (15:23:46-15:30:56) held RSS at 287-288 MB flat, swap flat at 29 MB, available ~64 MB,
+    FPS 3.0-4.3, temperature 52.6-58.5 C peak, with no camera V4L2 timeout and a clean Ctrl-C.
+    face: identify measured ~142-171 ms with no face and ~806-915 ms with a face. David Solis was
+    recognized (0.397, 0.515) and greeted twice, 48 s apart (>= 30 s cooldown). zram reported
+    /dev/zram0 zstd 447 MB with 27.5 MB data -> 4.6 MB compressed. The earlier OOM `Killed` and
+    SD-swap stall did not recur. Noted two expected behaviors: a YOLO person whose face YuNet
+    cannot see keeps probing at ~150 ms, and an in-view person is re-narrated ~every 6 s by the
+    arbiter dedup cooldown.
+  rationale: >-
+    The prior two runs were nondeterministic (one froze, one was smooth) because the working set
+    sat ~12 MB under the ceiling. With the downscale, cooldown back-off, 3-thread split, warm-up,
+    gpu_mem=32 and zram, a long soak is now stable with no swap growth, which is the evidence the
+    Day-4 gate needs. Recording the exact numbers and command makes the result reproducible and
+    prevents re-litigating the memory design.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Still open before the demo: verify a non-enrolled person is NOT greeted, and enroll the other
+    2 people (exercise the 3-person pre-warm path). If the working set grows, fall back in order:
+    int8bq SFace -> MobileFaceNet-on-NCNN -> smaller Piper voice.
+
+# ---------------------------------------------------------------------------
+# CHG-0074 — Day 5: front VL53L0X proximity alert (FR-10, Phase C)
+# ---------------------------------------------------------------------------
+- id: CHG-0074
+  date: 2026-09-20
+  agent: opencode/deepseek-v4-flash
+  type: feature
+  status: applied
+  invariants: [INV-013, INV-022, INV-030, INV-032, INV-033, INV-075]
+  supersedes: null
+  summary: >-
+    Implemented the front proximity sensor (Phase C). New module src/sensors/: proximity.hpp
+    (ProximityReading, IProximitySensor, NullProximitySensor, makeProximitySensor) and
+    vl53l0x_proximity.{hpp,cpp}, an i2c-dev driver that ports ST's VL53L0X API init + single-shot
+    ranging (via the Pololu reference, consulted 2026-09-20) with no third-party library. The
+    pipeline gained a proximityLoop thread that polls the sensor (default 5 Hz), latches "close"
+    with hysteresis (threshold 0.8 m / release 1.2 m), and submits a Priority::Safety,
+    preStabilized alert ("cuidado, obstáculo cerca.", dedupKey "proximity:front"). The freshest
+    reading is published atomically and fused into buildSceneAlert (FR-02.4): while the ToF is
+    close it suppresses the camera's obstacle warning and narration, so the low-latency Safety
+    channel is not doubled. Config adds proximityEnabled/proximityThresholdM/proximityReleaseM/
+    proximityPollMs (clamped + validated). CMake gates only the driver behind
+    LUMINA_ENABLE_PROXIMITY (LUMINA_HAS_PROXIMITY); the factory is always compiled and returns
+    Null on host/disabled builds, so behavior there is unchanged (INV-033). XSHUT (GPIO17) is not
+    driven: Phase B verified the sensor answers at 0x29 with XSHUT released.
+  rationale: >-
+    The camera heuristic infers distance from bbox area and only sees the 10 narrated COCO
+    classes, so it cannot warn about a wall, pole, door or low barrier - the most common
+    obstacles - and it is 250-330 ms behind. A true mm ToF read (~ms, class-agnostic, works in
+    darkness) is the correct complementary safety channel and satisfies FR-02.4's proximity
+    precedence. Keeping it behind an interface + factory preserves the host build and INV-033.
+  files:
+    - Lumina-BETA-RPI-2W/src/sensors/proximity.hpp
+    - Lumina-BETA-RPI-2W/src/sensors/proximity.cpp
+    - Lumina-BETA-RPI-2W/src/sensors/vl53l0x_proximity.hpp
+    - Lumina-BETA-RPI-2W/src/sensors/vl53l0x_proximity.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.hpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/src/app/scene.hpp
+    - Lumina-BETA-RPI-2W/src/app/scene.cpp
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/src/alerts/arbiter.hpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/mocks/mock_proximity_sensor.hpp
+    - Lumina-BETA-RPI-2W/tests/test_proximity.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/docs/PROXIMITY.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild aarch64 with -DLUMINA_ENABLE_PROXIMITY=ON. On-device: run with proximity enabled and
+    confirm a hand/wall within ~0.8 m speaks the Safety phrase within the latency target, that no
+    duplicate utterance occurs when a class obstacle is also detected, and that RSS/temp are
+    unchanged. If the sensor is not detected, the driver logs and startup continues with Null.
+
+# ---------------------------------------------------------------------------
+# CHG-0075 — Day 5: handle VL53L0X I2C read results (fix -Wunused-result)
+# ---------------------------------------------------------------------------
+- id: CHG-0075
+  date: 2026-09-20
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-013, INV-022, INV-070]
+  supersedes: null
+  summary: >-
+    Fixed two -Wunused-result warnings in vl53l0x_proximity.cpp: readReg()/readReg16() ignored
+    the [[nodiscard]] bool from readBytes(). Rather than suppress them, the driver now records
+    I/O failures in a new Impl::m_ioError flag. Every register accessor (writeReg/writeReg16/
+    writeMulti/readReg/readReg16/readMulti) consumes the primitive's result and sets the flag on
+    failure. init() clears the flag, checks it before reporting success (so a dead/loose bus
+    fails cleanly and main() falls back to NullProximitySensor), and read() clears it per sample
+    and returns nullopt on any transfer error (a failed read would otherwise look like a bogus 0
+    value and spin to the timeout).
+  rationale: >-
+    The warnings signaled a real robustness gap: a failed I2C read silently returned 0 and the
+    busy-wait loops only recovered via the 100 ms timeout. Honouring the return value makes the
+    failure explicit and fails fast, with no behaviour change on a healthy bus.
+  files:
+    - Lumina-BETA-RPI-2W/src/sensors/vl53l0x_proximity.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host + aarch64; confirm the two warnings are gone and ctest stays green. On-device
+    behaviour is unchanged on a healthy sensor.
 ```

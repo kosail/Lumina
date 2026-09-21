@@ -29,6 +29,7 @@
 #include "core/bounded_queue.hpp"
 #include "core/config.hpp"
 #include "core/frame.hpp"
+#include "sensors/proximity.hpp"
 #include "vision/detector.hpp"
 #include "vision/face_recognizer.hpp"
 
@@ -50,7 +51,8 @@ public:
              audio::IAudioSink* sink,
              core::Config config,
              PipelineConfig pipelineConfig = {},
-             vision::IFaceRecognizer* faceRecognizer = nullptr);
+             vision::IFaceRecognizer* faceRecognizer = nullptr,
+             sensors::IProximitySensor* proximity = nullptr);
 
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
@@ -81,6 +83,9 @@ private:
     void inferenceLoop(std::stop_token stopToken);
     void speechLoop(std::stop_token stopToken);
     void faceLoop(std::stop_token stopToken);
+    // Polls the front proximity sensor and raises a Safety alert when an obstacle
+    // is within threshold (FR-10). Runs only when a sensor was injected.
+    void proximityLoop(std::stop_token stopToken);
 
     // Decide whether to dispatch `frame` to the face thread and drain any finished
     // result into the greeting policy. Called from the inference thread.
@@ -92,6 +97,7 @@ private:
     audio::ITtsEngine* m_tts = nullptr;
     audio::IAudioSink* m_sink = nullptr;
     vision::IFaceRecognizer* m_faceRecognizer = nullptr; // may be null (host / disabled)
+    sensors::IProximitySensor* m_proximity = nullptr;    // may be null (host / disabled)
 
     core::Config m_config;
     FaceGreeter m_faceGreeter; // greeting policy (stability + cooldown)
@@ -102,6 +108,9 @@ private:
     core::BoundedQueue<FaceResult> m_faceResults; // face -> inference (single slot)
 
     core::TimePoint m_lastFaceAttempt{}; // throttles face dispatch (faceIntervalMs)
+    // Freshest proximity distance in metres, or negative when no valid reading.
+    // Written by the proximity thread, read by the inference thread for fusion.
+    std::atomic<float> m_proximityMeters{-1.0F};
 
     std::atomic<bool> m_running{false}; // guards start()/stop() idempotency
 
@@ -109,6 +118,7 @@ private:
     std::jthread m_inferenceThread;
     std::jthread m_speechThread;
     std::jthread m_faceThread;
+    std::jthread m_proximityThread;
 };
 
 } // namespace lumina::app

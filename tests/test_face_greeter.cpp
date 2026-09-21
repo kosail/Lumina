@@ -74,7 +74,9 @@ TEST_CASE("greeter: a person is not re-announced within the cooldown")
 
     CHECK_FALSE(greeter.observe("Ana", at(0)).has_value());
     CHECK_FALSE(greeter.observe("Ana", at(100)).has_value());
-    REQUIRE(greeter.observe("Ana", at(200)).has_value());  // announced at t=200
+    const auto announced = greeter.observe("Ana", at(200));
+    REQUIRE(announced.has_value());  // announced at t=200
+    greeter.markGreeted(*announced, at(200));  // the caller accepted the greeting
 
     // Still stable, but within the 100 ms cooldown -> suppressed.
     CHECK_FALSE(greeter.observe("Ana", at(250)).has_value());
@@ -82,6 +84,35 @@ TEST_CASE("greeter: a person is not re-announced within the cooldown")
 
     // Past the cooldown window, a fresh observation announces again.
     REQUIRE(greeter.observe("Ana", at(400)).has_value());
+}
+
+TEST_CASE("greeter: observe retries until markGreeted is called")
+{
+    // A greeting can be rejected at submit time (arbiter gap/priority). observe()
+    // must keep offering the candidate so the pipeline can retry on the next pulse
+    // instead of the person being silenced for the whole cooldown (CHG-0071).
+    FaceGreeter greeter(testConfig());
+
+    CHECK_FALSE(greeter.observe("Ana", at(0)).has_value());
+    CHECK_FALSE(greeter.observe("Ana", at(100)).has_value());
+    REQUIRE(greeter.observe("Ana", at(200)).has_value());
+    // Not marked: still offered.
+    REQUIRE(greeter.observe("Ana", at(300)).has_value());
+    REQUIRE(greeter.observe("Ana", at(400)).has_value());
+
+    greeter.markGreeted("Ana", at(400));
+    CHECK_FALSE(greeter.observe("Ana", at(450)).has_value());  // within cooldown now
+}
+
+TEST_CASE("greeter: hasActiveCooldown reflects the per-person window")
+{
+    FaceGreeter greeter(testConfig());  // cooldown is 100 ms
+
+    CHECK_FALSE(greeter.hasActiveCooldown(at(0)));
+    greeter.markGreeted("Ana", at(1000));
+    CHECK(greeter.hasActiveCooldown(at(1050)));   // 50 ms later
+    CHECK_FALSE(greeter.hasActiveCooldown(at(1100)));  // exactly at the boundary
+    CHECK_FALSE(greeter.hasActiveCooldown(at(2000)));
 }
 
 TEST_CASE("greeter: empty names are treated as 'no match'")

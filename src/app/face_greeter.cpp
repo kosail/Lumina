@@ -44,8 +44,24 @@ std::optional<std::string> FaceGreeter::observe(const std::optional<std::string>
         return std::nullopt;  // greeted recently; let them settle
     }
 
-    m_lastGreeted[*name] = now;
+    // Stable and past the cooldown: hand the candidate to the caller. The cooldown
+    // is committed later, by markGreeted(), once the greeting was accepted.
     return m_candidate;
+}
+
+void FaceGreeter::markGreeted(const std::string& name, core::TimePoint now)
+{
+    m_lastGreeted[name] = now;
+}
+
+bool FaceGreeter::hasActiveCooldown(core::TimePoint now) const
+{
+    for (const auto& entry : m_lastGreeted) {
+        if ((now - entry.second) < m_config.cooldown) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void FaceGreeter::reset() noexcept

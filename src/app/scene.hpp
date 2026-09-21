@@ -24,11 +24,18 @@ namespace lumina::app {
 // `capturedAt` is carried into the alert so the speech worker can report
 // event->audible latency (INV-051). Precedence: nearest in-path obstacle (Near,
 // then Mid), else the multi-class Spanish description.
+//
+// `proximityMeters` is the freshest front time-of-flight distance, when valid
+// (FR-02.4). The sensor takes precedence at short range: while it reports an
+// obstacle at or below `config.proximityThresholdM`, the proximity thread has
+// already raised the Safety alert, so this function says nothing from the camera
+// path (neither the obstacle warning nor narration) to avoid competing with it.
 [[nodiscard]] std::optional<alerts::Alert> buildSceneAlert(
     const std::vector<core::Detection>& detections,
     const core::Config& config,
     int frameWidth,
     int frameHeight,
-    core::TimePoint capturedAt);
+    core::TimePoint capturedAt,
+    std::optional<float> proximityMeters = std::nullopt);
 
 } // namespace lumina::app

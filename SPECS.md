@@ -117,7 +117,8 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
   4. Enabling it does not measurably change FPS or alert latency.
 
 ### FR-10 — Front proximity obstacle alert (rear deferred)
-- **Priority:** SHOULD (after the core three; Phase C, planned post-Day-4) · **Status:** Approved ·
+- **Priority:** SHOULD (after the core three; Phase C, planned post-Day-4) · **Status:** Implemented
+  (CHG-0074; on-device verification pending) ·
   **Trace:** INV-013, INV-033, INV-075
 - **Description:** Read the single **front** VL53L0X time-of-flight sensor over I²C1 and speak a
   short Spanish alert when an obstacle is closer than a configured threshold. Routed through the

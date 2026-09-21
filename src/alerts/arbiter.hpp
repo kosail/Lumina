@@ -16,12 +16,13 @@
 //   - a bounded queue that never grows without limit (FR-07.2) and never discards
 //     a pending Safety alert to make room for a Description.
 //
-// Threading: submit() is called by one producer thread, waitPop()/
-// finishSpeaking() by the single speech thread. All mutable state is guarded by
-// `m_mutex`; the interrupt signal is a separate std::atomic<bool> because the TTS
-// engine reads it from inside synthesis without taking the lock. `now` is passed
-// in by the caller (no clock call inside) so behaviour is fully deterministic in
-// tests.
+// Threading: submit() is called by the inference thread and, for pre-stabilized
+// Safety alerts, by the proximity thread; waitPop()/finishSpeaking() by the
+// single speech thread. All mutable state is guarded by `m_mutex`, so multiple
+// producers are safe; the interrupt signal is a separate std::atomic<bool>
+// because the TTS engine reads it from inside synthesis without taking the lock.
+// `now` is passed in by the caller (no clock call inside) so behaviour is fully
+// deterministic in tests.
 // ---------------------------------------------------------------------------
 
 #pragma once

@@ -22,6 +22,7 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -34,6 +35,7 @@
 #include "audio/piper_tts.hpp"
 #include "capture/libcamera_source.hpp"
 #include "core/logging.hpp"
+#include "sensors/proximity.hpp"
 #include "vision/face_recognizer.hpp"
 #include "vision/ncnn_detector.hpp"
 
@@ -112,6 +114,10 @@ int main(int argc, char** argv)
     detectorConfig.inputHeight = config.inferHeight;
     detectorConfig.scoreThreshold = config.scoreThreshold;
     detectorConfig.nmsThreshold = config.nmsThreshold;
+    // Reserve one of the four cores for OpenCV face inference, Piper synthesis and
+    // libcamera (CHG-0071): with all four cores on YOLO those stages contend and
+    // inflate latency under memory pressure. The FPS cost is small (INV-050).
+    detectorConfig.numThreads = 3;
     lumina::vision::NcnnDetector detector(detectorConfig);
     if (!detector.load()) {
         LUMINA_LOG_ERROR("failed to load detector from '{}'", modelDir);
@@ -184,8 +190,19 @@ int main(int argc, char** argv)
     lumina::audio::AlsaConfig alsaConfig; // defaults to the bluealsa PCM
     lumina::audio::AlsaSink sink(alsaConfig);
 
+    // Front proximity sensor (FR-10). The factory returns a Null sensor when the
+    // feature is not compiled in or is disabled, so injection is always safe; a
+    // failed init also falls back to Null rather than failing startup.
+    std::unique_ptr<lumina::sensors::IProximitySensor> proximity =
+        lumina::sensors::makeProximitySensor(config);
+    if (!proximity->init()) {
+        LUMINA_LOG_WARN("proximity sensor unavailable; continuing without it");
+        proximity = std::make_unique<lumina::sensors::NullProximitySensor>();
+    }
+
     lumina::app::Pipeline pipeline(&camera, &detector, &tts, &sink, config,
-                                   lumina::app::PipelineConfig{}, faceRecognizer);
+                                   lumina::app::PipelineConfig{}, faceRecognizer,
+                                   proximity.get());
     if (!pipeline.start()) {
         LUMINA_LOG_ERROR("pipeline failed to start");
         return 1;
