@@ -1,7 +1,7 @@
 # Companion app ecosystem (FR-11)
 
 How the Lúmina runtime reports status to, and accepts commands from, the Android/desktop companion
-app. The **public contract** is `docs/APP_PROTOCOL.md`; this file covers the internals, the
+app. The **authoritative contract** is `docs/API_CONTRACT.md`; this file covers the internals, the
 on-device probe results that shaped the panel, and the operations runbook.
 
 INV-003 is preserved: the runtime makes **no network calls**. The only runtime change is a local
@@ -46,7 +46,7 @@ status file; a separate, opt-in **`lumina_agent`** process owns every socket.
 **local file only** — not telemetry, no sockets. `/run` is tmpfs, so there is no SD-card wear.
 
 Format (one `key=value` per line; private interface between two of our own processes — the public
-JSON lives in `docs/APP_PROTOCOL.md`):
+JSON lives in `docs/API_CONTRACT.md`):
 
 ```
 running=1
@@ -74,7 +74,7 @@ not). Without it the status writer fails harmlessly (it logs once and the runtim
 | People | names come from the runtime status file's one-per-line `person=` entries (the runtime knows the enrolled store), surfaced in the telemetry `people` array |
 | Runtime control | `systemctl stop/start lumina` (narrow sudoers) |
 | Enrollment (camera) | stop runtime → `lumina_enroll --camera --frames <1..10>` as user `lumina` → **always** start runtime; stream `captured N/10` |
-| Enrollment (images) | decode + stage frames on disk (caps: 12 images / 8 MiB) → `lumina_enroll --image ...`; runtime keeps running unless `LUMINA_AGENT_ENROLL_STOP_RUNTIME=1` |
+| Enrollment (images) | decode + stage frames on disk (caps: 12 images / 8 MiB; control line up to 16 MiB for the base64 payload) → `lumina_enroll --image ...`; runtime keeps running unless `LUMINA_AGENT_ENROLL_STOP_RUNTIME=1` |
 | Shutdown | `stop()` cancels any in-flight enrollment so the service stops promptly, then the orchestrator still restarts the runtime |
 
 Processes are launched with `posix_spawnp` (multi-thread-safe), and every socket is closed-on-exec so
@@ -113,6 +113,6 @@ commands via `/etc/sudoers.d/lumina-agent`.
 
 ## 7. Related
 
-- `docs/APP_PROTOCOL.md` — the frozen wire contract.
+- `docs/API_CONTRACT.md` — the authoritative wire contract (`docs/APP_PROTOCOL.md` is a short pointer).
 - `docs/FACE.md` — enrollment tool details.
 - `docs/PERFORMANCE.md` — the AP-vs-A2DP cost measurement (pending).

@@ -96,7 +96,8 @@ cmake/          aarch64 toolchain and find-modules
 | [`CHANGELOG.md`](CHANGELOG.md) | Append-only, machine-readable change log |
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Measured detection performance, resolution decision, fallback plan |
 | [`docs/COMPANION.md`](docs/COMPANION.md) | Companion app ecosystem: architecture, agent, probe results |
-| [`docs/APP_PROTOCOL.md`](docs/APP_PROTOCOL.md) | Frozen wire protocol for the Android/desktop client (FR-11) |
+| [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | **Authoritative** companion wire contract (schemas, commands, Kotlin notes) for FR-11 |
+| [`docs/APP_PROTOCOL.md`](docs/APP_PROTOCOL.md) | Short pointer/summary of the companion protocol (superseded) |
 
 Source-of-truth order: `INVARIANTS.md` > `SPECS.md` > `RAW_PLAN.md` > `AGENTS.md` > code.
 
@@ -199,7 +200,7 @@ The runtime reports its status to an Android/desktop companion app over the Pi's
 The runtime stays **network-free**: it only writes `/run/lumina/status` at ~1 Hz. A separate,
 opt-in **`lumina_agent`** process owns every socket — a 1 Hz UDP status broadcast (`:47600`) and a
 token-gated TCP control channel (`:47601`) for volume/mute, the enrolled-people list, runtime
-start/stop, and enrollment (Pi camera or phone photos). Wire contract: `docs/APP_PROTOCOL.md`;
+start/stop, and enrollment (Pi camera or phone photos). Wire contract: `docs/API_CONTRACT.md`;
 architecture and operations: `docs/COMPANION.md`.
 
 ```bash

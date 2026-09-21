@@ -24,8 +24,10 @@ namespace {
 
 // Largest request line we accept over the control channel. A client that sends a
 // huge line without a newline is dropped rather than growing the buffer without
-// bound. Comfortably larger than any request (image enrollment is bounded by caps).
-constexpr std::size_t kMaxLineBytes = 64 * 1024;
+// bound. It must be large enough for image enrollment: the contract allows up to
+// 8 MiB of decoded images in one JSON line, which is ~10.7 MiB of base64 plus
+// overhead. 16 MiB leaves margin for that without being effectively unbounded.
+constexpr std::size_t kMaxLineBytes = 16 * 1024 * 1024;
 
 }  // namespace
 

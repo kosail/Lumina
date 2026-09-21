@@ -3097,4 +3097,77 @@
     routes clamp/stream/restart, runtime.start recovers after a forced failure, and image-enroll RSS
     is acceptable (else enable LUMINA_AGENT_ENROLL_STOP_RUNTIME). CHG-0085 flips to applied after the
     on-device checks.
+
+# ---------------------------------------------------------------------------
+# CHG-0087 — Add the authoritative machine-readable companion API contract
+# ---------------------------------------------------------------------------
+- id: CHG-0087
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-070]
+  supersedes: null
+  summary: >-
+    Added docs/API_CONTRACT.md: the authoritative, machine-first contract for FR-11, written for AI
+    consumption (the frontend is built by an AI). It specifies the transport (UDP 47600 subscribe +
+    broadcast/unicast telemetry; TCP 47601 newline JSON with a token), all constants/defaults, JSON
+    Schema 2020-12 for the status datagram and every request/reply/error, per-command APP SENDS /
+    APP RECEIVES blocks, enrollment state machines (camera + image, cancel on a second connection,
+    guaranteed runtime restart), the three-card UI mapping, Kotlin/Ktor notes, a resilience matrix,
+    worked transcripts, an enum glossary and code traceability. Slimmed docs/APP_PROTOCOL.md to a
+    short pointer to API_CONTRACT.md and repointed the README docs map, the README companion section
+    and docs/COMPANION.md.
+  rationale: >-
+    The client is implemented separately (Compose Multiplatform) by an AI, so a single explicit,
+    exhaustive, greeting-to-byte contract removes guesswork and prevents integration bugs. Making it
+    authoritative avoids two diverging descriptions; APP_PROTOCOL.md is kept only so existing links
+    resolve. No runtime or agent behavior changed.
+  files:
+    - Lumina-BETA-RPI-2W/docs/API_CONTRACT.md
+    - Lumina-BETA-RPI-2W/docs/APP_PROTOCOL.md
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Keep API_CONTRACT.md in sync with any wire change; bump `proto` on breaking changes. INVARIANTS.md,
+    RAW_PLAN.md and three code comments still name APP_PROTOCOL.md (which remains as a pointer); they
+    can be repointed to API_CONTRACT.md on request.
+
+# ---------------------------------------------------------------------------
+# CHG-0088 — Raise the control line cap so image enrollment fits
+# ---------------------------------------------------------------------------
+- id: CHG-0088
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-022, INV-070]
+  supersedes: null
+  summary: >-
+    Raised kMaxLineBytes in src/agent/control.cpp from 64 KiB to 16 MiB. The
+    enroll.images request is a single newline-delimited JSON line that may carry up to
+    8 MiB of decoded images (about 10.7 MiB as base64 plus overhead), so the 64 KiB cap
+    added in CHG-0086 would have dropped the connection before processing it. Documented
+    the limit as MAX_LINE_BYTES in docs/API_CONTRACT.md, added explicit client image
+    guidance there (<=1080 px height, JPEG ~quality 80, 3-5 photos, <=500 KB each, total
+    <=8 MiB), and noted the cap in docs/COMPANION.md.
+  rationale: >-
+    The mock server review surfaced the contradiction between the 64 KiB control-line cap
+    and the 8 MiB image-enrollment payload cap. Even with the client resizing to <=1080 px
+    and JPEG-encoding (150-600 KB per frame, ~33% larger as base64), a single image already
+    exceeds 64 KiB, so image enrollment could never work on the device. 16 MiB covers the
+    documented maximum payload with margin while remaining effectively bounded. No protocol
+    shape changed; this only makes the existing contract reachable.
+  files:
+    - Lumina-BETA-RPI-2W/src/agent/control.cpp
+    - Lumina-BETA-RPI-2W/docs/API_CONTRACT.md
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host (ctest) + aarch64, then verify enroll.images with real <=1080 px JPEGs on
+    the device (a 3-5 photo batch should reach enroll.done). The mock server already uses a
+    matching 16 MiB line cap.
 ```
