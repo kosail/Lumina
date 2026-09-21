@@ -397,6 +397,16 @@ audio. It is implemented only after all core features pass (Day 6).
 
 **Changeability.** By user approval.
 
+**Amendment (CHG-0084, 2026-09-21).** The deferred telemetry is realized as an optional **companion
+API** (FR-11). The runtime core stays network-free: it only writes a local status snapshot
+(`LUMINA_ENABLE_STATUS`, default ON, ~1 Hz, low priority; a local file is not telemetry). A separate,
+opt-in **`lumina_agent`** process owns the entire network surface — a 1 Hz UDP status broadcast and a
+**token-gated, LAN-only TCP control channel** (volume/mute, people list, start/stop, enrollment). The
+inbound control channel is **new scope beyond one-way telemetry** and was explicitly approved by the
+user. It must never block the core path and must not be reachable off the local hotspot. Because the
+runtime itself still issues no network calls, **INV-003 is unaffected**. Implementation plan and
+protocol: `docs/APP_PROTOCOL.md`, `docs/COMPANION.md`.
+
 ---
 
 ### INV-075 — Front proximity I²C/GPIO contract  `HARD`
@@ -636,7 +646,7 @@ where they differ from Java.
 | INV-031  | HARD     | Bounded queues; never block capture |
 | INV-032  | HARD     | Safety alerts preempt descriptions |
 | INV-033  | HARD     | Proximity is modular and enabled on target |
-| INV-034  | HARD     | Telemetry deferred, optional, off core path |
+| INV-034  | HARD     | Telemetry optional/off core path; companion API amended CHG-0084 |
 | INV-040  | SCOPE    | Beta features are fixed |
 | INV-041  | SCOPE    | Face recognition, NOT currency; no navigation |
 | INV-042  | SCOPE    | Spanish only |

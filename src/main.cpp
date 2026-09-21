@@ -37,6 +37,7 @@
 #include "capture/libcamera_source.hpp"
 #include "core/logging.hpp"
 #include "sensors/proximity.hpp"
+#include "status/status_writer.hpp"
 #include "vision/face_recognizer.hpp"
 #include "vision/ncnn_detector.hpp"
 
@@ -144,6 +145,7 @@ int main(int argc, char** argv)
     // a fetched/enrolled store. When unavailable the pipeline runs without it, so
     // a partial build never fails to start.
     lumina::vision::IFaceRecognizer* faceRecognizer = nullptr;
+    std::vector<std::string> people;  // enrolled names, reported in the status (FR-11)
 #if defined(LUMINA_HAS_FACE)
     lumina::vision::FaceModelConfig faceConfig;  // defaults: models/face/{yunet,sface}.onnx
     // core::Config is the single source of truth for the runtime face tuning, so
@@ -156,6 +158,7 @@ int main(int argc, char** argv)
     lumina::vision::FaceRecognizer faceRecognizerImpl(faceConfig);
     if (faceRecognizerImpl.load()) {
         faceRecognizer = &faceRecognizerImpl;
+        people = faceRecognizerImpl.store().names();
     } else {
         LUMINA_LOG_WARN("face recognition unavailable; continuing without it");
     }
@@ -235,9 +238,23 @@ int main(int argc, char** argv)
         proximity = std::make_unique<lumina::sensors::NullProximitySensor>();
     }
 
-    lumina::app::Pipeline pipeline(&camera, &detector, &tts, &sink, config,
-                                   lumina::app::PipelineConfig{}, faceRecognizer,
-                                   proximity.get());
+    // Companion status snapshot (FR-11). The runtime stays network-free (INV-003):
+    // it only writes a local key=value file that the separate lumina_agent reads.
+    // The path defaults to /run (tmpfs, so no SD wear) and can be overridden with
+    // LUMINA_STATUS_PATH. Failing to write is never fatal: the status thread just
+    // logs once and keeps the pipeline running.
+    lumina::app::PipelineConfig pipelineConfig;
+    pipelineConfig.people = people;
+#if defined(LUMINA_HAS_STATUS)
+    const char* statusPathEnv = std::getenv("LUMINA_STATUS_PATH");
+    const std::string statusPath = statusPathEnv != nullptr ? statusPathEnv : "/run/lumina/status";
+    lumina::status::FileStatusWriter statusWriter(statusPath);
+    pipelineConfig.statusPublisher = &statusWriter;
+    LUMINA_LOG_INFO("status: publishing to '{}'", statusPath);
+#endif
+
+    lumina::app::Pipeline pipeline(&camera, &detector, &tts, &sink, config, pipelineConfig,
+                                   faceRecognizer, proximity.get());
     if (!pipeline.start()) {
         LUMINA_LOG_ERROR("pipeline failed to start");
         return 1;

@@ -67,6 +67,8 @@ Pipeline::Pipeline(capture::ICamera* camera,
     , m_arbiter(pipelineConfig.arbiter)
     , m_faceFrames(1)   // keep only the newest face request (INV-031)
     , m_faceResults(1)  // keep only the newest face answer
+    , m_status(pipelineConfig.statusPublisher)
+    , m_people(std::move(pipelineConfig.people))
 {
 }
 
@@ -94,6 +96,7 @@ bool Pipeline::start()
 
     // std::jthread runs the lambda and passes its stop_token; it joins in its
     // destructor (no detached threads, AGENTS §5).
+    m_startTime = core::now();  // uptime origin for the status snapshot (FR-11)
     m_captureThread = std::jthread([this](std::stop_token token) { captureLoop(token); });
     m_inferenceThread = std::jthread([this](std::stop_token token) { inferenceLoop(token); });
     m_speechThread = std::jthread([this](std::stop_token token) { speechLoop(token); });
@@ -106,6 +109,11 @@ bool Pipeline::start()
     // builds pass null and skip it entirely).
     if (m_proximity != nullptr) {
         m_proximityThread = std::jthread([this](std::stop_token token) { proximityLoop(token); });
+    }
+    // The status worker runs only when a publisher was injected (FR-11); it is the
+    // only place the runtime reports its health, and it never blocks the pipeline.
+    if (m_status != nullptr) {
+        m_statusThread = std::jthread([this](std::stop_token token) { statusLoop(token); });
     }
     return true;
 }
@@ -123,6 +131,7 @@ void Pipeline::stop() noexcept
     m_speechThread.request_stop();
     m_faceThread.request_stop();
     m_proximityThread.request_stop();
+    m_statusThread.request_stop();
     m_arbiter.close();
     m_frames.close();
     m_faceFrames.close();
@@ -142,6 +151,9 @@ void Pipeline::stop() noexcept
     }
     if (m_proximityThread.joinable()) {
         m_proximityThread.join();
+    }
+    if (m_statusThread.joinable()) {
+        m_statusThread.join();
     }
 
     if (m_sink != nullptr) {
@@ -178,6 +190,12 @@ void Pipeline::inferenceLoop(std::stop_token stopToken)
             break; // queue closed during shutdown
         }
         ++framesProcessed;
+
+        // Feed the status snapshot (FR-11): one atomic bump per frame plus a
+        // bounded-sample luminance read. Both are tiny and the frame is still
+        // intact here (it is moved into the face queue further below).
+        m_framesTotal.fetch_add(1, std::memory_order_relaxed);
+        m_meanLuma.store(status::meanLuma(frame), std::memory_order_relaxed);
 
         const std::vector<core::Detection> detections = m_detector->detect(frame);
         // Fuse the freshest front ToF distance (FR-02.4); negative means no reading.
@@ -408,6 +426,44 @@ void Pipeline::driveFaceRecognition(core::Frame frame, const std::vector<core::D
     work.capturedAt = frame.capturedAt;  // read before the move below
     work.frame = std::move(frame);       // transfer the pixels; no copy
     m_faceFrames.push(std::move(work));
+}
+
+void Pipeline::statusLoop(std::stop_token stopToken)
+{
+    // Publish one snapshot per second. The FPS is the number of inference frames
+    // since the previous publish divided by the real elapsed time, so it reflects
+    // live throughput rather than a long-window average. Sleeping in 100 ms slices
+    // keeps stop() responsive without a condition variable (this loop has no queue
+    // to wait on).
+    core::TimePoint lastWindow = core::now();
+    std::uint64_t lastFrames = m_framesTotal.load(std::memory_order_relaxed);
+
+    while (!stopToken.stop_requested()) {
+        for (int slice = 0; slice < 10 && !stopToken.stop_requested(); ++slice) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (stopToken.stop_requested()) {
+            break;
+        }
+
+        const core::TimePoint now = core::now();
+        const std::uint64_t frames = m_framesTotal.load(std::memory_order_relaxed);
+        const double seconds = core::toMilliseconds(now - lastWindow) / 1000.0;
+
+        status::StatusSnapshot snapshot;
+        snapshot.running = true;
+        snapshot.uptimeSeconds = static_cast<int>(core::toMilliseconds(now - m_startTime) / 1000.0);
+        snapshot.fps = seconds > 0.0 ? static_cast<double>(frames - lastFrames) / seconds : 0.0;
+        snapshot.rssMb = readRssMb();
+        snapshot.meanLuma = m_meanLuma.load(std::memory_order_relaxed);
+        snapshot.faceCount = m_people.size();
+        snapshot.people = m_people;  // copied once per second; only a few names
+        snapshot.sinkReady = m_running.load(std::memory_order_relaxed);
+        m_status->publish(snapshot);
+
+        lastWindow = now;
+        lastFrames = frames;
+    }
 }
 
 } // namespace lumina::app

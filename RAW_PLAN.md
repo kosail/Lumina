@@ -248,11 +248,21 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
 
 ---
 
-## 10. TELEMETRY (DEFERRED, INV9)
+## 10. TELEMETRY / COMPANION API (FR-11; amended CHG-0084)
 
-- Low-priority thread; stateless UDP datagrams to laptop server.
-- No MQTT/extra libs. Never blocks core; disabled unless LUMINA_ENABLE_TELEMETRY=ON.
-- Implement only after Day 5.
+Original plan: a low-priority UDP thread inside the runtime. **Realized differently** to keep the
+runtime core network-free (INV-003/INV-034):
+
+- The **runtime** writes a local status snapshot `/run/lumina/status.json` (FPS, mean frame
+  luminance, face count, sink state) at ~1 Hz, low priority, `LUMINA_ENABLE_STATUS=ON` by default.
+  Local file only; no sockets, no threads in the hot path.
+- A separate, opt-in **`lumina_agent`** process (C++, systemd unit) owns the network: UDP 47600
+  status broadcast (1 Hz JSON) and a token-gated, LAN-only TCP 47601 control channel (volume/mute
+  via `amixer -D bluealsa`, people list, start/stop, enrollment). It shells out to `systemctl` and
+  `lumina_enroll`; it never links into the runtime.
+- No laptop relay server: clients (Android + desktop, Compose Multiplatform) join the Pi hotspot and
+  connect directly. The old "stateless UDP datagrams to laptop server" line is superseded.
+- Protocol + on-device probe results: `docs/APP_PROTOCOL.md`, `docs/COMPANION.md`.
 
 ---
 
@@ -310,10 +320,36 @@ Fallback at any point: demo hardened Python nightly; keep C++ core as WIP.
    - Verify on-device (2026-09-20, CHG-0073): enrolled David Solís (4 photos) and greeted by name;
      a 7-min soak held RSS 287-288 MB flat, swap 29 MB flat, FPS 3.0-4.3, peak 58.5 °C, with no
      camera timeout. Live **--camera** enrollment verified on-device (CHG-0083, runbook `docs/FACE.md`).
-Still open: enroll the remaining people.
+     Still open: enroll the remaining people.
    - Deferred fallback if RAM pressure (INV-052): int8bq SFace or MobileFaceNet-on-NCNN.
    - Memory hardening (CHG-0070..0072): downscale YuNet input to `faceDetectionSide` (320); system
      `gpu_mem=32` + zram + `vm.swappiness=10`/`page-cluster=0`/`watermark_boost_factor=0`; and in the
      runtime, back off face inference during the greeting cooldown (`faceCooldownBackoffFactor`),
      commit the cooldown only after the arbiter accepts the greeting, run NCNN on 3 threads, and warm
      both DNNs at load. True working set ~289 MB vs 447 MB usable — keep this margin in mind.
+
+---
+
+## 13. COMPANION APP ECOSYSTEM (FR-11; CHG-0084)
+
+```
+PHONE / DESKTOP (Compose Multiplatform, user-built)
+   |  UDP 47600 telemetry (listen)        |  TCP 47601 control (JSON + token)
+   v                                     v
+Pi hotspot (wlan0, no internet)
+   lumina (C++ runtime)  ->  /run/lumina/status.json   (~1 Hz, local, no network)
+   lumina_agent (C++)    ->  UDP broadcast + TCP control
+                             shells: amixer -D bluealsa | systemctl | lumina_enroll
+```
+
+- Topology: **the Pi is the hotspot** (`nmcli device wifi hotspot ...`); the phone and desktop are
+  interchangeable clients. No laptop server. The radio is the same single 2.4 GHz chip shared with
+  A2DP, so AP mode is an accepted, measured-later cost.
+- Agent language: **C++** — same CMake/toolchain, tiny footprint, no impact on the runtime.
+- Enrollment (both routes): the **camera** route stops `lumina` (libcamera is single-client), runs
+  `lumina_enroll --camera --frames 10`, and **always** restarts it; progress streams frame N/10. The
+  **images** route keeps the runtime running (phone captures, agent runs `--image`).
+- Sensor panel decisions from on-device probes: volume via `amixer -D bluealsa` control
+  `<device> A2DP` (discovered dynamically); thermal via `/sys/class/thermal/thermal_zone0/temp`;
+  earbud battery **unavailable** (no `Battery1`) → card dropped; camera has no controls →
+  day/night is computed from **mean frame luminance**. Full log: `docs/COMPANION.md`.

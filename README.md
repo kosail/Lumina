@@ -75,10 +75,12 @@ src/
   alerts/       alert arbiter (priority, cooldown, preemption)
   audio/        Piper TTS wrapper (ITtsEngine), BlueALSA audio sink (IAudioSink)
   app/          pipeline orchestrator + Spanish describer
+  status/       local status snapshot hook (FR-11; runtime side, no network)
+  agent/        companion telemetry/control agent (FR-11; owns the network)
   i18n/         Spanish message catalog
-  telemetry/    optional UDP telemetry
+  telemetry/    optional UDP telemetry (superseded by agent/; kept for history)
 models/         yolo11n_ncnn/, face/, voices/
-scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, 7-setup_i2c.sh, 8-fetch_face_models.sh, enroll_face.sh, bt_setup.sh, 9-setup_autostart.sh (+ lumina.service)
+scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, 7-setup_i2c.sh, 8-fetch_face_models.sh, enroll_face.sh, bt_setup.sh, 9-setup_autostart.sh, 10-setup_agent.sh (+ lumina.service, lumina-agent.service)
 tests/          unit tests (doctest) and on-device benchmarks
 cmake/          aarch64 toolchain and find-modules
 ```
@@ -93,6 +95,8 @@ cmake/          aarch64 toolchain and find-modules
 | [`AGENTS.md`](AGENTS.md) | Operating manual: style, workflow, documentation rules |
 | [`CHANGELOG.md`](CHANGELOG.md) | Append-only, machine-readable change log |
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Measured detection performance, resolution decision, fallback plan |
+| [`docs/COMPANION.md`](docs/COMPANION.md) | Companion app ecosystem: architecture, agent, probe results |
+| [`docs/APP_PROTOCOL.md`](docs/APP_PROTOCOL.md) | Frozen wire protocol for the Android/desktop client (FR-11) |
 
 Source-of-truth order: `INVARIANTS.md` > `SPECS.md` > `RAW_PLAN.md` > `AGENTS.md` > code.
 
@@ -151,7 +155,9 @@ Compile-time options (defaults shown):
 | `LUMINA_ENABLE_AUDIO` | `OFF` | Build the Piper TTS + ALSA/bluealsa path |
 | `LUMINA_ENABLE_FACE` | `OFF` | Build the OpenCV face recognition path (YuNet + SFace) |
 | `LUMINA_ENABLE_PROXIMITY` | `OFF` | Build the VL53L0X proximity path (`ON` in the aarch64 preset) |
-| `LUMINA_ENABLE_TELEMETRY` | `OFF` | Build the optional UDP telemetry path |
+| `LUMINA_ENABLE_TELEMETRY` | `OFF` | Build the optional UDP telemetry path (superseded by `LUMINA_BUILD_AGENT`) |
+| `LUMINA_ENABLE_STATUS` | `ON` | Runtime writes the local status snapshot `/run/lumina/status` (~1 Hz; no network) |
+| `LUMINA_BUILD_AGENT` | `ON` | Build `lumina_agent` (companion telemetry + control; FR-11) |
 
 ## Run
 
@@ -186,6 +192,20 @@ Runtime environment variables (all optional):
 | `PIPER_NUM_THREADS` | Piper/ONNX Runtime intra-op threads (default 3) |
 | `LUMINA_PHRASE_CACHE_DIR` | On-disk TTS phrase cache directory (default `$HOME/.cache/lumina/phrase-cache`) |
 | `ORT_DISABLE_TELEMETRY` | Set to `1` to silence ONNX Runtime telemetry. **Privacy: the runtime sets this in-process before ONNX Runtime initializes (CHG-0080); you do not need to export it, and Lúmina never phones home (INV-003/INV-034).** |
+
+### Companion app (FR-11)
+
+The runtime reports its status to an Android/desktop companion app over the Pi's own Wi-Fi hotspot.
+The runtime stays **network-free**: it only writes `/run/lumina/status` at ~1 Hz. A separate,
+opt-in **`lumina_agent`** process owns every socket — a 1 Hz UDP status broadcast (`:47600`) and a
+token-gated TCP control channel (`:47601`) for volume/mute, the enrolled-people list, runtime
+start/stop, and enrollment (Pi camera or phone photos). Wire contract: `docs/APP_PROTOCOL.md`;
+architecture and operations: `docs/COMPANION.md`.
+
+```bash
+# On the Pi (after deploying `lumina` and `lumina_agent` to $LUMINA_HOME):
+scripts/10-setup_agent.sh --start   # /run/lumina + token + sudoers + lumina-agent.service
+```
 
 ### Privacy / no network
 

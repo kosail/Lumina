@@ -34,6 +34,14 @@ endif()
 # ---------------------------------------------------------------------------
 option(LUMINA_ENABLE_PROXIMITY "Build the optional proximity-sensor path" OFF) # INV-013, INV-033
 option(LUMINA_ENABLE_TELEMETRY "Build the optional UDP telemetry path" OFF)    # INV-034
+# Local status snapshot hook (FR-11). The runtime writes a tiny key=value file at
+# ~1 Hz; the network side lives in the separate lumina_agent. Default ON because it
+# is local-only (no sockets) and negligible; set OFF for a bare runtime build.
+option(LUMINA_ENABLE_STATUS "Build the local status snapshot hook (FR-11)" ON) # INV-034
+# The companion agent is a separate process that must stay tiny and must NOT link
+# the runtime's heavy dependencies (ncnn/OpenCV/libpiper); it links only logging
+# and its own sources. Default ON so host/CI builds it too.
+option(LUMINA_BUILD_AGENT "Build the companion lumina_agent (FR-11)" ON)
 # The libcamera capture path needs the target's libcamera. OFF by default so the
 # host/mock build links no camera libraries; enable for the on-device probe/runtime.
 option(LUMINA_ENABLE_LIBCAMERA "Build the libcamera capture path" OFF)         # INV-011
@@ -57,12 +65,19 @@ set(LUMINA_INFER_WIDTH     "320"   CACHE STRING "Detector input width in pixels"
 set(LUMINA_INFER_HEIGHT    "256"   CACHE STRING "Detector input height in pixels")
 
 # ---------------------------------------------------------------------------
+# Logging is its own tiny library: the companion agent must not link the runtime's
+# heavy dependencies (ncnn/OpenCV/libpiper), but it does use the same logger.
+# ---------------------------------------------------------------------------
+add_library(lumina_logging STATIC src/core/logging.cpp)
+target_include_directories(lumina_logging PUBLIC src)
+target_compile_options(lumina_logging PUBLIC -Wall -Wextra -Wpedantic)
+
+# ---------------------------------------------------------------------------
 # Core library. Pipeline logic lives here so the executable and the host tests
 # share exactly the same code; tests link this and need no hardware (INV-030).
 # Add new .cpp files here as modules are implemented.
 # ---------------------------------------------------------------------------
 add_library(lumina_core STATIC
-    src/core/logging.cpp
     src/core/power.cpp
     src/i18n/es.cpp
     src/vision/yolo11_decode.cpp
@@ -85,6 +100,9 @@ target_include_directories(lumina_core PUBLIC src)
 
 # Warn aggressively while the codebase is small; warnings are signals, not noise.
 target_compile_options(lumina_core PUBLIC -Wall -Wextra -Wpedantic)
+
+# The runtime logger is shared with the agent (see lumina_logging above).
+target_link_libraries(lumina_core PUBLIC lumina_logging)
 
 # ---------------------------------------------------------------------------
 # Optional libcamera capture source (INV-011). libcamera comes from the target
@@ -197,6 +215,44 @@ endif()
 if(LUMINA_ENABLE_PROXIMITY)
     target_sources(lumina_core PRIVATE src/sensors/vl53l0x_proximity.cpp)
     target_compile_definitions(lumina_core PUBLIC LUMINA_HAS_PROXIMITY=1)
+endif()
+
+# ---------------------------------------------------------------------------
+# Local status snapshot hook (FR-11, INV-003/INV-034). Pure C++ (no dependency):
+# the runtime writes /run/lumina/status at ~1 Hz and a separate agent owns the
+# network. Compiled into lumina_core so host tests can exercise the helpers too.
+# ---------------------------------------------------------------------------
+if(LUMINA_ENABLE_STATUS)
+    target_sources(lumina_core PRIVATE
+        src/status/status.cpp
+        src/status/status_writer.cpp)
+    target_compile_definitions(lumina_core PUBLIC LUMINA_HAS_STATUS=1)
+endif()
+
+# ---------------------------------------------------------------------------
+# Companion agent (FR-11). Split into a pure, host-testable core (JSON, parsers,
+# command runner) and a thin socket layer. Links only lumina_logging — never the
+# runtime's inference/hardware libraries, so it stays small and cannot inflate the
+# runtime's memory footprint.
+# ---------------------------------------------------------------------------
+if(LUMINA_BUILD_AGENT)
+    find_package(Threads REQUIRED)
+    add_library(lumina_agent_core STATIC
+        src/agent/json.cpp
+        src/agent/telemetry.cpp
+        src/agent/amixer.cpp
+        src/agent/enroll.cpp
+        src/agent/command_runner.cpp)
+    target_include_directories(lumina_agent_core PUBLIC src)
+    target_compile_options(lumina_agent_core PUBLIC -Wall -Wextra -Wpedantic)
+    target_link_libraries(lumina_agent_core PUBLIC lumina_logging)
+
+    add_executable(lumina_agent
+        src/agent/main_agent.cpp
+        src/agent/agent.cpp
+        src/agent/control.cpp
+        src/agent/udp.cpp)
+    target_link_libraries(lumina_agent PRIVATE lumina_agent_core Threads::Threads)
 endif()
 
 # ---------------------------------------------------------------------------

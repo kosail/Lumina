@@ -31,6 +31,7 @@ if(LUMINA_BUILD_TESTS)
         test_image_list.cpp
         test_proximity.cpp
         test_sink_watchdog.cpp
+        test_status.cpp
         test_yolo11_decode.cpp
         test_describer.cpp
         test_caching_tts.cpp)
@@ -38,6 +39,13 @@ if(LUMINA_BUILD_TESTS)
     # the include path in addition to src/ (which lumina_core exposes publicly).
     target_include_directories(lumina_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(lumina_tests PRIVATE lumina_core doctest::doctest)
+
+    # Agent tests need lumina_agent_core, which only exists when the agent is built
+    # (LUMINA_BUILD_AGENT, default ON). Guarded so disabling the agent still builds.
+    if(TARGET lumina_agent_core)
+        target_sources(lumina_tests PRIVATE test_agent.cpp)
+        target_link_libraries(lumina_tests PRIVATE lumina_agent_core)
+    endif()
 
     add_test(NAME lumina_tests COMMAND lumina_tests)
 endif()

@@ -17,7 +17,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -30,6 +32,7 @@
 #include "core/config.hpp"
 #include "core/frame.hpp"
 #include "sensors/proximity.hpp"
+#include "status/status.hpp"
 #include "vision/detector.hpp"
 #include "vision/face_recognizer.hpp"
 
@@ -40,6 +43,14 @@ namespace lumina::app {
 struct PipelineConfig {
     std::size_t frameQueueCapacity = 1; // keep only the freshest frame (INV-031)
     alerts::ArbiterConfig arbiter{};    // priority/cooldown/preemption (INV-032)
+    // Optional companion status publisher (FR-11). When null, no status thread is
+    // started and the runtime exposes nothing. Injected as a pointer (non-owning):
+    // the caller owns the concrete publisher and must outlive the Pipeline.
+    status::IStatusPublisher* statusPublisher = nullptr;
+    // Enrolled people's names, reported in the status snapshot (FR-11). Static for
+    // the process lifetime because enrollment only runs while the runtime is
+    // stopped, so there is no need to query the recognizer each second.
+    std::vector<std::string> people;
 };
 
 // Owns the worker threads and the queues. Non-copyable.
@@ -86,6 +97,9 @@ private:
     // Polls the front proximity sensor and raises a Safety alert when an obstacle
     // is within threshold (FR-10). Runs only when a sensor was injected.
     void proximityLoop(std::stop_token stopToken);
+    // Publishes a status snapshot ~1 Hz (FR-11). Runs only when a publisher was
+    // injected; the work is tiny and must never affect the other loops.
+    void statusLoop(std::stop_token stopToken);
 
     // Decide whether to dispatch `frame` to the face thread and drain any finished
     // result into the greeting policy. Called from the inference thread.
@@ -112,6 +126,16 @@ private:
     // Written by the proximity thread, read by the inference thread for fusion.
     std::atomic<float> m_proximityMeters{-1.0F};
 
+    // --- Status snapshot (FR-11) ---------------------------------------------
+    // Non-owning; null disables the status thread entirely.
+    status::IStatusPublisher* m_status = nullptr;
+    std::vector<std::string> m_people;           // reported in every snapshot
+    core::TimePoint m_startTime{};               // set in start(); for uptime
+    std::atomic<std::uint64_t> m_framesTotal{0}; // incremented per inference, for FPS
+    // Mean luminance of the last frame in [0,1], or negative before the first frame
+    // or when the format is unknown. Written by inference, read by status.
+    std::atomic<float> m_meanLuma{-1.0F};
+
     std::atomic<bool> m_running{false}; // guards start()/stop() idempotency
 
     std::jthread m_captureThread;
@@ -119,6 +143,7 @@ private:
     std::jthread m_speechThread;
     std::jthread m_faceThread;
     std::jthread m_proximityThread;
+    std::jthread m_statusThread;
 };
 
 } // namespace lumina::app

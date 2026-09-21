@@ -1,0 +1,35 @@
+# ---------------------------------------------------------------------------
+# lumina-agent.service — companion telemetry/control agent (FR-11).
+#
+# This is a TEMPLATE. Install it with scripts/10-setup_agent.sh, which substitutes
+# @LUMINA_USER@ / @LUMINA_HOME@ and drops the result in
+# /etc/systemd/system/lumina-agent.service. Do not copy it by hand.
+#
+# Design notes:
+#   - The agent runs as the same unprivileged user as the runtime. It is allowed
+#     exactly two privileged commands (`systemctl stop/start lumina`) via a narrow
+#     sudoers rule; everything else it does (amixer, lumina_enroll) needs no root.
+#   - It has no dependency on lumina.service: it must be able to start the runtime
+#     itself, including after an enrollment stopped it.
+#   - It owns the network surface. The runtime stays network-free (INV-003).
+# ---------------------------------------------------------------------------
+
+[Unit]
+Description=Lúmina companion agent (telemetry + control; FR-11)
+Documentation=file:@LUMINA_HOME@/docs/COMPANION.md
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+User=@LUMINA_USER@
+WorkingDirectory=@LUMINA_HOME@
+Environment=LUMINA_HOME=@LUMINA_HOME@
+Environment=LUMINA_LOG_LEVEL=info
+ExecStart=@LUMINA_HOME@/lumina_agent
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

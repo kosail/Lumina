@@ -2920,4 +2920,120 @@
     Enroll the remaining people (FR-03.1 asks for 3-4). Optionally record the exact person names and
     per-person embedding counts in docs/FACE.md section 6. Then the Day-5 demo runbook and the NFR-05
     1-hour soak.
+
+# ---------------------------------------------------------------------------
+# CHG-0084 — Approve the companion-app API (FR-11); amend INV-034
+# ---------------------------------------------------------------------------
+- id: CHG-0084
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: decision
+  status: applied
+  invariants: [INV-003, INV-034, INV-070]
+  supersedes: null
+  summary: >-
+    Added FR-11 (Companion app API) to SPECS.md: telemetry + a small control surface for Android and
+    desktop clients over the local hotspot. Amended INV-034 to permit an inbound, token-gated,
+    LAN-only control channel; the runtime core remains network-free (it only writes a local
+    ~1 Hz status snapshot), so INV-003 is unaffected. Marked FR-09 superseded by FR-11, rewrote
+    OOS-08 (client stays out-of-repo; no laptop relay server), and documented the ecosystem
+    architecture in RAW_PLAN.md §10/§13.
+  rationale: >-
+    The user approved the companion ecosystem as a showcase differentiator. The design deliberately
+    keeps the runtime untouched by network concerns: the runtime writes /run/lumina/status.json and
+    a separate opt-in lumina_agent (C++) owns UDP telemetry (47600) and the token-gated TCP control
+    channel (47601), shelling out to amixer/systemctl/lumina_enroll. This preserves INV-003/INV-034
+    (zero network in the core path) while enabling volume/mute, people list, start/stop, and both
+    enrollment routes. On-device probes fixed the sensor panel: volume works via
+    `amixer -D bluealsa` control '<device> A2DP'; earbud battery is unsupported (no BlueZ Battery1)
+    so the card is dropped; the camera exposes no V4L2/rpicam controls so day/night becomes mean
+    frame luminance. The Pi is the hotspot; clients are Compose Multiplatform (Android + desktop)
+    with no separate server.
+  files:
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Implement Phase 1 (runtime status hook, LUMINA_ENABLE_STATUS default ON), Phase 2
+    (docs/COMPANION.md + docs/APP_PROTOCOL.md), Phase 3 (lumina_agent + systemd + narrow sudoers),
+    Phase 4 (agent tests + doc sweep). Optional soak to quantify AP-vs-A2DP cost for the report.
+
+# ---------------------------------------------------------------------------
+# CHG-0085 — Implement the runtime status hook and the companion agent (FR-11)
+# ---------------------------------------------------------------------------
+- id: CHG-0085
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: impl
+  status: proposed
+  invariants: [INV-003, INV-020, INV-022, INV-030, INV-034, INV-070, INV-072]
+  supersedes: null
+  summary: >-
+    Implemented FR-11. Runtime side: a low-priority status thread writes
+    /run/lumina/status (key=value: running/uptime/fps/rss/mean_luma/face_count/sink_ready plus one
+    person= line per enrolled name) at ~1 Hz, gated by LUMINA_ENABLE_STATUS (default ON). Agent side:
+    a new C++ lumina_agent (own systemd unit) reads that file plus /sys thermal, /proc/meminfo and
+    /proc/loadavg, broadcasts a JSON status datagram over UDP 47600, and serves a token-gated
+    newline-JSON TCP 47601 control channel: volume.get/set/mute (amixer -D bluealsa, control
+    discovered dynamically), people.list, runtime.start/stop/state, and enrollment (camera route
+    stops lumina, runs lumina_enroll --camera --frames 10, streams captured N/10, and ALWAYS restarts
+    lumina; image route runs lumina_enroll --image without touching the runtime). Logging was
+    extracted into its own library so the agent links only logging, never ncnn/OpenCV/libpiper
+    (keeps it small and unable to inflate the runtime's memory). Added docs/COMPANION.md and
+    docs/APP_PROTOCOL.md, scripts/lumina-agent.service and scripts/10-setup_agent.sh (tmpfiles
+    /run/lumina + token + narrow sudoers), and host tests for the pure logic.
+  rationale: >-
+    Approved companion ecosystem (CHG-0084). The runtime stays network-free (INV-003): it only writes
+    a local file. The agent owns all sockets and shell-outs (systemctl/amixer/lumina_enroll), so the
+    detection/speech performance path is untouched. The camera enrollment route must stop the runtime
+    because libcamera is single-client; the orchestrator restarts it in a finally so a failed or
+    cancelled enrollment can never leave the device dark, and runtime.start is always available for
+    manual recovery. Volume is delegated to the verified `amixer -D bluealsa` control rather than
+    implemented in the runtime (minimal runtime code, as requested). On-device probes (CHG-0084)
+    fixed the panel: battery card dropped, day/night derived from mean luminance.
+  files:
+    - Lumina-BETA-RPI-2W/src/status/status.hpp
+    - Lumina-BETA-RPI-2W/src/status/status.cpp
+    - Lumina-BETA-RPI-2W/src/status/status_writer.hpp
+    - Lumina-BETA-RPI-2W/src/status/status_writer.cpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.hpp
+    - Lumina-BETA-RPI-2W/src/app/pipeline.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/src/agent/json.hpp
+    - Lumina-BETA-RPI-2W/src/agent/json.cpp
+    - Lumina-BETA-RPI-2W/src/agent/command_runner.hpp
+    - Lumina-BETA-RPI-2W/src/agent/command_runner.cpp
+    - Lumina-BETA-RPI-2W/src/agent/telemetry.hpp
+    - Lumina-BETA-RPI-2W/src/agent/telemetry.cpp
+    - Lumina-BETA-RPI-2W/src/agent/amixer.hpp
+    - Lumina-BETA-RPI-2W/src/agent/amixer.cpp
+    - Lumina-BETA-RPI-2W/src/agent/enroll.hpp
+    - Lumina-BETA-RPI-2W/src/agent/enroll.cpp
+    - Lumina-BETA-RPI-2W/src/agent/control.hpp
+    - Lumina-BETA-RPI-2W/src/agent/control.cpp
+    - Lumina-BETA-RPI-2W/src/agent/udp.hpp
+    - Lumina-BETA-RPI-2W/src/agent/udp.cpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.hpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.cpp
+    - Lumina-BETA-RPI-2W/src/agent/main_agent.cpp
+    - Lumina-BETA-RPI-2W/src/core/... (logging extracted to lumina_logging in CMakeLists.txt)
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/test_status.cpp
+    - Lumina-BETA-RPI-2W/tests/test_agent.cpp
+    - Lumina-BETA-RPI-2W/scripts/lumina-agent.service
+    - Lumina-BETA-RPI-2W/scripts/10-setup_agent.sh
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/docs/APP_PROTOCOL.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Build host (ctest) + aarch64, deploy lumina + lumina_agent to LUMINA_HOME, run
+    scripts/10-setup_agent.sh, and verify on-device: telemetry on the phone, volume set, both
+    enrollment routes with progress and runtime restart, and people.list. Then quantify the
+    hotspot (AP) vs A2DP cost in docs/PERFORMANCE.md. Status stays `proposed` until the build and
+    on-device checks pass.
 ```

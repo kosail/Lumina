@@ -114,7 +114,8 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
   2. Labels are externalized in `src/i18n/es.*` (no literals in pipeline logic).
 
 ### FR-09 — Optional device status telemetry to a laptop
-- **Priority:** COULD (deferred) · **Status:** Proposed · **Trace:** INV-034, INV-003
+- **Priority:** COULD (deferred) · **Status:** Superseded by FR-11 (CHG-0084) ·
+  **Trace:** INV-034, INV-003
 - **Description:** If time remains after core features pass (Day 6), send lightweight device status
   to a local laptop over UDP; the laptop relays to a mobile app.
 - **Acceptance criteria:**
@@ -139,6 +140,30 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
   3. A front obstacle within threshold speaks a short Spanish proximity phrase.
   4. Proximity alerts are not spammed (cooldown) and can preempt a description (INV-032).
   5. No proximity assumption leaks into modules that should not depend on it (interface-only).
+
+### FR-11 — Companion app API (telemetry + control; Pi agent)
+- **Priority:** SHOULD (post-core; ecosystem) · **Status:** Approved (CHG-0084) ·
+  **Trace:** INV-034, INV-003
+- **Description:** Expose Lúmina's status to, and accept a small set of commands from, companion
+  clients (Android and desktop) over the local hotspot. The **runtime** exposes only a local status
+  file and makes **no network calls**; a separate, opt-in **`lumina_agent`** process owns the network
+  surface (UDP telemetry broadcast + token-gated TCP control) and shells out to existing tools
+  (`amixer`, `systemctl`, `lumina_enroll`) for operations it must not implement itself. Control is
+  LAN-only, has no internet dependency, and never blocks the core path.
+- **Acceptance criteria:**
+  1. The runtime core makes no network calls; telemetry and control live in the separate agent
+     (INV-003 unaffected).
+  2. The runtime writes an optional, low-priority local status snapshot (FPS, mean frame luminance,
+     face count, audio-sink state) at ~1 Hz; gated by `LUMINA_ENABLE_STATUS` (default ON; local file
+     only, no network → not telemetry under INV-034).
+  3. The agent broadcasts a 1 Hz JSON status datagram (UDP 47600) and serves a newline-delimited
+     JSON control channel (TCP 47601) that requires a shared token.
+  4. Commands: read/set volume (via `amixer -D bluealsa`, control name discovered dynamically),
+     mute/unmute, list enrolled people, start/stop the runtime, and enroll a person from photos or
+     the camera.
+  5. Enrollment streams progress (frame N of the 10-frame target) and **always** restores the
+     runtime, even on failure; a `runtime.start` command is always available for manual recovery.
+  6. Enabling the agent does not measurably change detection FPS or alert latency.
 
 ---
 
@@ -212,7 +237,7 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
 | OOS-05 | Desktop GUI / OpenCV HighGUI | Headless only. | INV-021 |
 | OOS-06 | Multi-device Bluetooth management | Single sink only. | INV-014 |
 | OOS-07 | Subscription/B2B/B2G backend | Business layer, not the runtime beta. | — |
-| OOS-08 | Mobile app and laptop relay server | Vibe-coded separately; only the UDP hook is in scope (FR-09). | INV-034 |
+| OOS-08 | Mobile/desktop client app | Vibe-coded separately by the user; the in-repo scope is only the Pi agent API (FR-11) plus the local status hook. No laptop relay server: clients join the Pi hotspot directly. | INV-034 |
 | OOS-09 | Motorcycle and truck narration | Removed from the beta class set and deferred as a nice-to-have; re-enabling is config-only (FR-08). | INV-040, INV-041 |
 
 ---
@@ -251,6 +276,7 @@ confirms no network dependency.
 | FR-08 | INV-040, INV-042 |
 | FR-09 | INV-034, INV-003 |
 | FR-10 | INV-013, INV-033, INV-075 |
+| FR-11 | INV-034, INV-003 |
 | NFR-01..05 | INV-050..053, INV-031, INV-032 |
 | NFR-06 | INV-003, INV-034 |
 | NFR-07 | INV-030, INV-072 |
