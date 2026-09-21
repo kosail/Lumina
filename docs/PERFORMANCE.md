@@ -408,7 +408,7 @@ CHANGELOG entry.
 
 ---
 
-## 13. Front proximity alert (FR-10, CHG-0074; measurements pending)
+## 13. Front proximity alert (FR-10, CHG-0074; measured CHG-0076)
 
 Build with `-DLUMINA_ENABLE_PROXIMITY=ON`. A dedicated `proximityLoop` thread polls the VL53L0X at
 `proximityPollMs` (default 200 ms → 5 Hz). Each single-shot measurement takes ~33 ms, so the thread
@@ -423,6 +423,100 @@ while it reports a close obstacle the camera path is silent (no warning, no narr
 channels cannot double. When the ToF is far or has no target, the camera's bbox heuristic remains
 authoritative (it can catch objects the narrow ToF beam misses).
 
-**To measure on‑device:** wave a hand / approach a wall within ~0.8 m and confirm the Safety phrase
-speaks within the INV‑051 target; confirm no duplicate when a class obstacle is also detected;
-record RSS/temp and `proximity: obstacle at X.XX m` lines here.
+**Measured on‑device (2026‑09‑21, CHG‑0076).** Run 19:21:24–19:25:48 (~4.5 min) with
+`LUMINA_ENABLE_PROXIMITY=ON`, command as in §12. The driver initialised cleanly
+(`proximity: VL53L0X ready on '/dev/i2c-1' (timing budget 33849 us)`) and never logged an I²C error.
+
+| Metric | Measured | Notes |
+|---|---|---|
+| Proximity alerts | **0.05 / 0.15 / 0.11 / 0.13 / 0.10 / 0.13 / 0.13 / 0.38 m** | sporadic, with long quiet stretches (e.g. 19:22:35–19:23:30) and no alert |
+| `event→speech-start` (proximity) | **0–1 ms** | `detectedAt` is the sensor‑read instant, so this measures sensor→speech only |
+| Inference FPS | **4.0–4.5** | vs 3.0–4.3 face‑only → no CPU regression |
+| RSS | **279–280 MB flat** | vs 287–288 MB face‑only run → no increase |
+| Temperature | **54.8 °C** | below the ~80 °C throttle point |
+| I²C errors | **none** | driver `m_ioError` never set |
+| Shutdown | **clean Ctrl‑C** | `Lúmina stopped` |
+
+The ~0 ms figure is expected, not a measurement bug: unlike the camera path (which stamps
+`detectedAt` when the frame is captured, giving ~266–293 ms), the proximity thread submits with
+`detectedAt = now()`, so the alert is exactly as fresh as the sensor read. When the ToF reported
+close, `buildSceneAlert` suppressed the camera warning **and** narration, so the two channels did
+not double on the same obstacle; the camera path still warned during the stretches where the ToF
+was far/no‑target (correct — the ToF beam is narrow).
+
+**Observation (not a defect).** Suppression uses the *instantaneous* ToF reading, and the proximity
+alert carries its own dedup key (`proximity:front`) while the camera's Near obstacle uses the
+phrase text; a single far/invalid sample can therefore re‑enable the camera right after a proximity
+event, so the identical urgent phrase can be heard from both channels a few seconds apart. The
+readings were also all short (0.05–0.38 m), consistent with hand‑waving tests over an open forward
+view; confirm the mounted sensor does not face a nearby surface. Candidate refinements (deferred,
+not required for the beta): share one dedup key across the two channels, or hold the close state
+~1 s.
+
+---
+
+## 14. Boot and Lumina startup (NFR-04)
+
+Two separate clocks, both measured on the Pi Zero 2 W on 2026‑09‑21. They are independent: the OS
+services do not affect the runtime once it is running, but together they set "power‑on → ready".
+
+### 14.1 OS boot to reachable SSH
+
+`systemd-analyze critical-chain` **before** and **after** disabling `cloud-init` (the user applied
+this; `cloud-init` is a one‑time provisioning tool, unused on this unit).
+
+| Milestone | cloud-init ON | cloud-init OFF | Δ |
+|---|---|---|---|
+| `multi-user.target` | 34.977 s | **30.513 s** | −4.46 s |
+| `ssh.service` | 34.585 s (+389 ms) | **30.014 s (+496 ms)** | −4.57 s |
+| `network.target` | 34.560 s | 29.998 s | — |
+| `NetworkManager.service` | 15.132 s (+19.425 s) | 10.552 s (+19.443 s) | duration unchanged |
+| `dbus.service` | 14.756 s (+351 ms) | 10.047 s (+484 ms) | — |
+| `sysinit.target` | 14.674 s | 9.955 s | — |
+| cloud‑init (main/local/network) | 9.09 → 14.67 s (~5.6 s) | removed | — |
+| `systemd-fsck@…` | 7.618 s (+1.229 s) | off critical path | — |
+
+- Disabling `cloud-init` saved **~4.5 s**.
+- `NetworkManager` is the dominant cost at **~19.4 s** and was **kept** (user decision); it is the
+  Wi‑Fi association/DHCP wait, and `network.target` + `ssh.service` both order after it.
+- **Power‑on → reachable SSH ≈ 30 s.**
+
+### 14.2 Lumina process startup
+
+Command (same config as §12, proximity enabled):
+
+```bash
+LD_LIBRARY_PATH=$PWD/third_party/libpiper/lib LUMINA_LOG_LEVEL=debug ./lumina \
+  models/yolo11n_ncnn_320x256 models/voices/es_MX-claude-high.onnx espeak-ng-data
+```
+
+| Milestone | Time | Δ from first log |
+|---|---|---|
+| ncnn detector ready (3 threads) | 19:47:00 | 0 s |
+| Piper ready (libpiper 1.8.0) | 19:47:13 | +13 s |
+| YuNet + SFace loaded; FaceStore (1 person, 4 emb.) | 19:47:16 | +16 s |
+| phrase cache (0 new) / proximity ready / libcamera streaming | 19:47:17 | +17 s |
+| ALSA bluealsa sink ready / **"Lúmina running"** | 19:47:18 | **+18 s** |
+| first detection `'una persona enfrente.'` (371.4 ms) | 19:47:18 | +18 s |
+| first speech (`event→speech-start` 267 ms) | 19:47:20 | +20 s |
+| FPS 4.1 · RSS 295 MB | 19:47:23 | +23 s |
+
+- The first log line is the detector's; the process start is not logged, so **`process → running`
+  ≈ 18 s** and **`process → first speech` ≈ 20 s** are lower bounds.
+- **Piper model load (~13 s) is the single biggest chunk**, then face+store ~3 s and camera/ALSA
+  ~1–2 s; proximity is ~instant and the phrase cache is warm (0 new).
+
+### 14.3 NFR‑04 verdict
+
+SPECS NFR‑04 asks for "ready … within ~30 s of power‑on". Counted from **power‑on** with the current
+**manual** launch (SSH in, then run `./lumina`):
+
+```
+~30 s boot→SSH  +  ~18 s app load  ≈ 48 s   →  NFR‑04 (~30 s) NOT met as counted
+```
+
+The app's own startup (~18 s) is fine; the gap is the serial boot + load. To meet NFR‑04 as written,
+`lumina` must **autostart** (a systemd unit) so its ~18 s load overlaps the remaining boot and lands
+~30–35 s, or the OS boot must shrink further. This is the open Day‑5 "startup readiness" item; no
+change was made here. NFR‑04 also names "Bluetooth audio connected", which depends on the
+BT‑autoconnect work (FR‑06.1, `scripts/bt_setup.sh` — not yet created).

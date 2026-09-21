@@ -2570,4 +2570,48 @@
   follow_up: >-
     Rebuild host + aarch64; confirm the two warnings are gone and ctest stays green. On-device
     behaviour is unchanged on a healthy sensor.
+
+# ---------------------------------------------------------------------------
+# CHG-0076 — Record boot/startup times and on-device proximity validation
+# ---------------------------------------------------------------------------
+- id: CHG-0076
+  date: 2026-09-21
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-013, INV-050, INV-052, INV-053, INV-070]
+  supersedes: null
+  summary: >-
+    Recorded two measurement sets. (1) Boot to reachable SSH: disabling cloud-init cut
+    multi-user.target 34.977 -> 30.513 s and ssh.service 34.585 -> 30.014 s (~4.5 s saved);
+    NetworkManager was kept and remains the dominant cost at ~19.4 s, so power-on -> SSH is ~30 s.
+    (2) Lumina startup (manual launch): detector ready at t=0, Piper ready +13 s, face/store +16 s,
+    proximity/camera +17 s, "Lumina running" +18 s, first detection +18 s, first speech +20 s,
+    FPS 4.1 / RSS 295 MB. Piper model load (~13 s) dominates; process -> running ~18 s and
+    process -> first speech ~20 s are lower bounds (process start is not logged). Also recorded the
+    on-device proximity validation in PERFORMANCE.md section 13: readings 0.05-0.38 m,
+    event->speech-start 0-1 ms (detectedAt is the sensor read), FPS 4.0-4.5, RSS 279-280 MB flat,
+    temperature 54.8 C, no I2C errors, clean Ctrl-C, and no duplicate when the ToF was close
+    (camera warning + narration suppressed). Added the NFR-04 verdict: ~30 s boot + ~18 s manual
+    app load ~= 48 s from power-on, so NFR-04 (~30 s) is NOT met as counted; it needs Lumina to
+    autostart (systemd unit) or a faster boot.
+  rationale: >-
+    These are the two remaining unmeasured numbers for the Day-5 showcase hardening (NFR-04
+    startup, and FR-10 proximity which PERFORMANCE section 13 still flagged as pending). Recording
+    the exact systemd-analyze chain and the startup milestone table makes the result reproducible
+    and prevents re-deriving the boot budget. The NFR-04 gap is a SHOULD and is surfaced explicitly
+    so the autostart decision is not silently skipped. The proximity run confirms the FR-10 design
+    (low latency, no CPU/mem regression, no channel doubling) and notes one deferred refinement
+    (shared dedup key / brief close-state hold) for the cross-channel repetition, which is not a
+    beta blocker.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Day-5 startup readiness: add a systemd unit so lumina autostarts and its ~18 s load overlaps
+    boot (target NFR-04 ~30 s), and create scripts/bt_setup.sh for Bluetooth autoconnect (FR-06.1,
+    which NFR-04 also depends on). Optional, if wanted: address the proximity/camera cross-channel
+    repetition (share a dedup key, or hold the close state ~1 s). No SPECS.md change made here;
+    annotate NFR-04 as "not met as counted" when the startup item is closed.
 ```
