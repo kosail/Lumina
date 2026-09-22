@@ -86,6 +86,9 @@ readable by the runtime (running it as root would break the next runtime load).
 
 ## 5. Install / run
 
+End-to-end bring-up (hotspot first, then the runtime and agent services, then the app) is in
+[`PI_RUNBOOK.md`](PI_RUNBOOK.md). The agent-specific steps:
+
 ```bash
 # On the Pi, from the repo checkout (aarch64 build already present in ~/lumina):
 scripts/10-setup_agent.sh            # installs the unit + narrow sudoers + generates the token

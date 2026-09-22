@@ -3170,4 +3170,58 @@
     Rebuild host (ctest) + aarch64, then verify enroll.images with real <=1080 px JPEGs on
     the device (a 3-5 photo batch should reach enroll.done). The mock server already uses a
     matching 16 MiB line cap.
+
+# ---------------------------------------------------------------------------
+# CHG-0089 — Add docs/PI_RUNBOOK.md (real-device bring-up)
+# ---------------------------------------------------------------------------
+- id: CHG-0089
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-001, INV-003, INV-034, INV-070]
+  supersedes: null
+  summary: >-
+    Added docs/PI_RUNBOOK.md: the end-to-end operational spine for bringing up a real Lúmina device
+    (build on the laptop, deploy to $LUMINA_HOME, Pi OS prep, pair earbuds, create the Wi-Fi hotspot,
+    install/enable lumina.service then lumina-agent.service, verify, connect the companion app,
+    enroll, operate/tear down). It states the two-process mental model (runtime network-free; the
+    agent owns UDP 47600 / TCP 47601) and links to CROSS_COMPILE.md, COMPANION.md, API_CONTRACT.md,
+    BLUETOOTH.md, FACE.md and PROXIMITY.md instead of duplicating them. Linked it from the README
+    documentation map and from docs/COMPANION.md section 5. Section 6 also documents how to pin the
+    AP address deterministically to 10.42.0.1/24 (the device wifi hotspot subcommand has no IP
+    argument; set ipv4.addresses on the shared profile it created, then re-activate), with a fully
+    declarative nmcli connection add recipe as the alternative, so the app's default Host matches.
+    Sections 7-8 also spell out the two setup scripts' relationship to the hotspot: 9-setup_autostart.sh
+    is hotspot-independent (never reads an IP), while 10-setup_agent.sh bakes wlan0's IPv4 into
+    lumina-agent.service at install time, so it must run after the hotspot and be re-run with --start
+    only if the AP address changes (re-running preserves the token and therefore the app's config).
+  rationale: >-
+    The companion feature is split across a second binary (lumina_agent) and a Wi-Fi hotspot that the
+    runtime never had, so the setup/launch/use sequence was only reconstructable from COMPANION.md,
+    the two systemd unit templates and three setup scripts. A single ordered runbook removes that
+    tribal knowledge and encodes the ordering trap found while writing it: the hotspot must exist
+    BEFORE scripts/10-setup_agent.sh runs, because that script detects wlan0's IPv4 address to set
+    LUMINA_AGENT_BIND_ADDR/_BROADCAST. Hotspot facts (nmcli device wifi hotspot synopsis, the
+    ipv4.method=shared 10.42.x.1/24 default, autoconnect persistence) were verified against the
+    official NetworkManager and Raspberry Pi sources and cited with access date per INV-001; the
+    runbook deliberately does NOT assert 10.42.0.1 as a guaranteed default (only 10.42.x.1/24 is
+    documented; 10.42.0.1 is our observed value) and tells the operator to confirm with
+    `nmcli device show wlan0`. Because the subcommand cannot take the address, the runbook pins it on
+    the created profile via ipv4.addresses, which the official ipv4.method=shared description confirms
+    is honored (the 10.42.x.1/24 auto-assignment applies only when ipv4.addresses is unset). Docs
+    only: no code, no dependency, no invariant change. The runtime
+    repo is read-only from the Android companion's side (its FE-INV-004), so this entry records the
+    deliberate context switch.
+  files:
+    - Lumina-BETA-RPI-2W/docs/PI_RUNBOOK.md
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Walk the runbook once on real hardware and correct any step that does not match reality; in
+    particular confirm the pinned AP address actually comes up as 10.42.0.1/24 after the re-activation.
+    Optional later (user-deferred): a scripts/0-setup_hotspot.sh wrapper that runs the create + pin +
+    autoconnect steps.
 ```

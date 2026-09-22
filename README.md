@@ -96,6 +96,7 @@ cmake/          aarch64 toolchain and find-modules
 | [`CHANGELOG.md`](CHANGELOG.md) | Append-only, machine-readable change log |
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Measured detection performance, resolution decision, fallback plan |
 | [`docs/COMPANION.md`](docs/COMPANION.md) | Companion app ecosystem: architecture, agent, probe results |
+| [`docs/PI_RUNBOOK.md`](docs/PI_RUNBOOK.md) | Bring up a real device end to end: build, deploy, hotspot, runtime + agent services, verify, connect the app |
 | [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | **Authoritative** companion wire contract (schemas, commands, Kotlin notes) for FR-11 |
 | [`docs/APP_PROTOCOL.md`](docs/APP_PROTOCOL.md) | Short pointer/summary of the companion protocol (superseded) |
 
