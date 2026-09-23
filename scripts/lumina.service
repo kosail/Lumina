@@ -33,6 +33,12 @@ Environment=LUMINA_LOG_LEVEL=info
 # mobile.events.data.microsoft.com; keep it disabled. The runtime also sets this
 # in-process before ONNX Runtime initializes (CHG-0080); this is belt-and-braces.
 Environment=ORT_DISABLE_TELEMETRY=1
+# Demo hardening (CHG-0098): never power the device off when the earbuds are absent
+# (FR-06.1 would otherwise shut the Pi down after 3 minutes), and wait far longer for
+# the BlueALSA sink (10000 x 3 s ≈ 8.3 h) instead of giving up. Remove these two lines
+# for a stock build; the runtime defaults are unchanged when they are unset.
+Environment=LUMINA_AUDIO_SHUTDOWN_ON_FAILURE=0
+Environment=LUMINA_AUDIO_SINK_MAX_RETRIES=10000
 ExecStart=@LUMINA_HOME@/lumina models/yolo11n_ncnn_320x256 models/voices/es_MX-claude-high.onnx espeak-ng-data
 Restart=on-failure
 RestartPreventExitStatus=2

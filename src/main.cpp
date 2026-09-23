@@ -35,6 +35,7 @@
 #include "audio/piper_tts.hpp"
 #include "audio/sink_watchdog.hpp"
 #include "capture/libcamera_source.hpp"
+#include "core/config_env.hpp"
 #include "core/logging.hpp"
 #include "sensors/proximity.hpp"
 #include "status/status_writer.hpp"
@@ -111,7 +112,12 @@ int main(int argc, char** argv)
     const std::string espeakDataDir =
         argc > 3 ? argv[3] : "third_party/libpiper/share/espeak-ng-data";
 
-    const lumina::core::Config config = lumina::core::defaultConfig();
+    // Demo hardening (CHG-0098): a curated set of fields may be overridden from the
+    // environment so the deployed unit can tune behavior without a rebuild (above
+    // all, never power the device off when the audio sink is absent). Invalid
+    // values are ignored; clampConfig bounds everything for the rest of the run.
+    const lumina::core::Config config =
+        lumina::core::clampConfig(lumina::core::applyEnvOverrides(lumina::core::defaultConfig()));
 
     lumina::capture::LibcameraConfig cameraConfig;
     lumina::capture::LibcameraSource camera(cameraConfig);
@@ -196,6 +202,24 @@ int main(int argc, char** argv)
     LUMINA_LOG_INFO("phrase cache: {} new phrase(s) rendered into '{}'",
                     rendered,
                     cacheConfig.directory);
+
+    // Pre-show check (CHG-0098/CHG-0099): LUMINA_WARM_ONLY=1 loads the models,
+    // renders any missing phrases, reports the cache size, and exits before the sink
+    // wait and the pipeline (exit 0 = cache ready, 1 = not writable). It needs
+    // neither the earbuds nor the camera, so it can be run seconds before the show.
+    bool warmOnly = false;
+    if (const char* warmOnlyEnv = std::getenv("LUMINA_WARM_ONLY")) {
+        warmOnly = lumina::core::parseEnvBool(warmOnlyEnv).value_or(false);
+    }
+    if (warmOnly) {
+        // cacheReady() is false when the cache directory is not usable, so the
+        // check can gate a pre-show script (exit non-zero) instead of always 0.
+        const bool ready = tts.cacheReady();
+        LUMINA_LOG_INFO("warm-only: {} phrase(s) requested, {} newly rendered, cache '{}' {}",
+                        warmPhrases.size(), rendered, cacheConfig.directory,
+                        ready ? "ready" : "NOT WRITABLE");
+        return ready ? 0 : 1;
+    }
 
     lumina::audio::AlsaConfig alsaConfig; // defaults to the bluealsa PCM
     lumina::audio::AlsaSink sink(alsaConfig);

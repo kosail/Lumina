@@ -73,8 +73,14 @@ Assisted setup: `scripts/7-setup_i2c.sh` (and `scripts/7-setup_i2c.sh --verify`)
 | `GND` | **pin 6** (`GND`) | common ground |
 | `SDA` | **pin 3** (`GPIO2`) | I²C1 data |
 | `SCL` | **pin 5** (`GPIO3`) | I²C1 clock |
-| `XSHUT` | **pin 11** (`GPIO17`) | reset line (active-low) |
+| `XSHUT` | **pin 11** (`GPIO17`) | reset line (active-low); **not wired in the current build** — see the note below |
 | `GPIO1` | not connected | optional interrupt; we poll |
+
+> **Current build (2026-09-22):** `XSHUT` is **not wired** — the front sensor is left at its
+> power-on default and answers at `0x29`, and the driver does not drive the line. The rear sensor is
+> not built either. **GPIO17 and GPIO27 are therefore uncommitted**; the deferred volume-button
+> proposal would use them (`docs/DEFERRED.md` D-001). Do not read the `XSHUT` row above as an active
+> connection in this build.
 
 ### How to read a pin number
 
@@ -203,7 +209,8 @@ Config knobs (`core::Config`): `proximityEnabled`, `proximityThresholdM`, `proxi
 The rear sensor will share I²C1 with the front one. Two identical VL53L0X both power up at
 `0x29`, so they need **different addresses**.
 
-**Reserved rear mapping (INV-075):** `XSHUT` → GPIO27 = pin 13, address `0x30`.
+**Reserved rear mapping (INV-075):** `XSHUT` → GPIO27 = pin 13, address `0x30`. (GPIO27 is
+uncommitted in the current single-sensor build — see the note in §4.)
 
 **Sharing the bus lines (`3V3`, `GND`, `SDA`, `SCL`).** "Sharing" just means making an
 electrical node with three connections (Pi + front + rear). Options:

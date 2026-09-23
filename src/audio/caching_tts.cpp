@@ -193,6 +193,14 @@ public:
         return true;
     }
 
+    // Quiet existence check (no create, no log) for the pre-show gate.
+    [[nodiscard]] bool directoryExists() const
+    {
+        std::error_code error;
+        const bool exists = std::filesystem::is_directory(m_config.directory, error);
+        return exists && !error;
+    }
+
     // Writes one phrase to disk atomically (temp file + rename).
     bool store(const std::string& path, const std::string& text,
                const std::vector<float>& samples, int sampleRate) const
@@ -303,6 +311,11 @@ std::size_t CachingTts::warm(const std::vector<std::string>& phrases)
                         capture.samples().size());
     }
     return rendered;
+}
+
+bool CachingTts::cacheReady() const
+{
+    return m_impl->directoryExists();
 }
 
 core::Status CachingTts::synthesize(std::string_view text,

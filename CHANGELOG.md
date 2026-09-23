@@ -3472,4 +3472,158 @@
     None until the user confirms resuming. Then: re-check GPIO17/27 are free, install libgpiod-dev
     on the Pi and re-sync the cross sysroot (verify libgpiod >= 2.0), grant the agent user gpio
     access, and implement Option A per docs/DEFERRED.md D-001.
+
+# ---------------------------------------------------------------------------
+# CHG-0096 — Clear-state doc hygiene (close CHG-0085; refresh stale docs)
+# ---------------------------------------------------------------------------
+- id: CHG-0096
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: chore
+  status: applied
+  invariants: [INV-070]
+  supersedes: CHG-0085
+  summary: >-
+    Documentation-only clean-up before the showcase hardening change. Marked the FR-11 companion
+    implementation (CHG-0085, previously `status: proposed`) as applied/superseded now that its
+    follow-ups are covered by CHG-0090..0094. Corrected three stale statements: README roadmap item
+    3 (face is verified on-device, CHG-0073/0083), docs/PROXIMITY.md (XSHUT is not wired in this
+    build and GPIO17/GPIO27 are uncommitted; rear mapping clarified), and docs/COMPANION.md (the
+    AP-vs-A2DP cost measurement is out of scope for this stage). No code changed.
+  rationale: >-
+    CHG-0085 was left `proposed` pending on-device verification; that verification has since
+    happened and the agent was extended (people-from-store, initializing, volume -1, bind retry).
+    Leaving a live feature marked `proposed` is misleading to future agents. The PROXIMITY.md wiring
+    table still implied an active XSHUT connection that does not exist, which also hid the fact that
+    GPIO17/27 are free (relevant to the deferred button proposal, D-001). The README/COMPANION
+    wording described work that is done or explicitly deferred.
+  files:
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/docs/PROXIMITY.md
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None. CHG-0085 is closed; do not re-open it (append a new entry instead).
+
+# ---------------------------------------------------------------------------
+# CHG-0097 — On-device verification of the FR-11 agent follow-ups
+# ---------------------------------------------------------------------------
+- id: CHG-0097
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: test
+  status: applied
+  invariants: [INV-070]
+  supersedes: null
+  summary: >-
+    Recorded user-reported on-device verification of the companion-agent follow-ups: (a) the Personas
+    tab lists enrolled people while lumina is stopped (CHG-0090/CHG-0091), (b) a camera enrollment
+    reports `initializing` through the post-enrollment restart (CHG-0092), and (c) telemetry reports
+    `"volume":-1` when the BlueALSA mixer is unavailable (CHG-0093). The CHG-0094 boot-bind journal
+    check (single failure then success, no restart loop) was not explicitly reported and remains
+    open.
+  rationale: >-
+    These were the outstanding on-device `follow_up`s from the FR-11 hardening series; closing them
+    confirms the agent behaves as designed on the real Pi and that the app-visible symptoms ("Sin
+    Conexión", missing people) are resolved. Reported by the user during the clear-state pass; no
+    new measurement values were captured.
+  files:
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Confirm the CHG-0094 boot journal check on the next reboot; if it passes, append a short entry
+    (do not edit this one). Otherwise treat it as a live defect.
+
+# ---------------------------------------------------------------------------
+# CHG-0098 — Demo hardening: config env overrides + warm-only pre-show check
+# ---------------------------------------------------------------------------
+- id: CHG-0098
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: impl
+  status: applied
+  invariants: [INV-001, INV-014, INV-020, INV-030, INV-070]
+  supersedes: null
+  summary: >-
+    Added src/core/config_env.{hpp,cpp}: a curated, testable environment-override layer for
+    core::Config. Recognized (all optional) LUMINA_AUDIO_SHUTDOWN_ON_FAILURE,
+    LUMINA_AUDIO_SINK_MAX_RETRIES, LUMINA_AUDIO_SINK_RETRY_MS, LUMINA_FACE_ENABLED and
+    LUMINA_PROXIMITY_ENABLED; invalid/out-of-range values are ignored. main.cpp now applies the
+    overrides then clampConfig, and gained LUMINA_WARM_ONLY=1 (load the models, warm the phrase
+    cache, log the size, exit 0 before the sink wait/pipeline). scripts/lumina.service sets
+    LUMINA_AUDIO_SHUTDOWN_ON_FAILURE=0 and LUMINA_AUDIO_SINK_MAX_RETRIES=10000 for the demo. Added
+    tests/test_config_env.cpp (parsing + override behavior) and documented the variables in README
+    and docs/PI_RUNBOOK.md (§9b pre-show checklist). Defaults are unchanged when the variables are
+    unset.
+  rationale: >-
+    The biggest stage risk was that the runtime powers the Pi off if the earbuds are absent for 3
+    minutes (FR-06.1), with no way to change it without a rebuild: core::Config had no environment
+    layer. A missing earbud now makes the demo unit wait (~8.3 h) instead of shutting down, and the
+    face/proximity/sink knobs are tunable from the unit. LUMINA_WARM_ONLY gives a seconds-long,
+    hardware-free check that the TTS phrase cache is hot (a cold cache otherwise blocks startup for
+    minutes). The parsing is pure and unit-tested (INV-030); the deployment defaults keep FR-06.1
+    intact for a stock build (INV-014). No wire or protocol change.
+  files:
+    - Lumina-BETA-RPI-2W/src/core/config_env.hpp
+    - Lumina-BETA-RPI-2W/src/core/config_env.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/test_config_env.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/scripts/lumina.service
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/docs/PI_RUNBOOK.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host (ctest, new test_config_env) + aarch64, redeploy lumina + lumina.service and
+    daemon-reload. On device: with the earbuds off, confirm the runtime waits instead of powering
+    off; run LUMINA_WARM_ONLY=1 once; then a 30-60 min soak (H5) and append the measurements
+    (do not edit this entry).
+
+# ---------------------------------------------------------------------------
+# CHG-0099 — Second-pass fixes for the demo-hardening change
+# ---------------------------------------------------------------------------
+- id: CHG-0099
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-001, INV-030, INV-070]
+  supersedes: null
+  summary: >-
+    Review fixes on CHG-0098. (F2) applyEnvOverrides() now reports a recognized-but-invalid
+    variable through an injected InvalidEnvFn; the real-environment overload logs
+    `runtime config: ignoring invalid NAME='VALUE'` at WARN, so a typo is no longer silent. (F3)
+    CachingTts gained cacheReady() (a quiet is_directory check), and LUMINA_WARM_ONLY now exits 1
+    when the cache directory is unusable (was always 0). (F5) Fixed the PI_RUNBOOK §9b warm-only
+    command to cd into $LUMINA_HOME first. (F1) Removed the LUMINA_FACE_ENABLED override entirely:
+    face recognition is core to the showcase and must always run. Added tests for the invalid-value
+    callback and for cacheReady(). No change to defaults or to the audio path.
+  rationale: >-
+    A second pass over CHG-0098 found no undefined behavior or crashes, but three correctness /
+    observability gaps: invalid environment values were silently ignored (a typo like
+    LUMINA_AUDIO_SHUTDOWN_ON_FAILURE=nooo would leave the stage Pi powering itself off with no log),
+    the pre-show warm check could not fail, and the runbook command relied on the caller's cwd.
+    Exposing faceEnabled as a knob also risked a stray variable disabling a core demo feature, so
+    the override was removed (the Config field remains, default true). LUMINA_PROXIMITY_ENABLED=0
+    still injects a NullProximitySensor while the proximity thread runs as a no-op — noted, not
+    changed (pre-existing, harmless).
+  files:
+    - Lumina-BETA-RPI-2W/src/core/config_env.hpp
+    - Lumina-BETA-RPI-2W/src/core/config_env.cpp
+    - Lumina-BETA-RPI-2W/src/audio/caching_tts.hpp
+    - Lumina-BETA-RPI-2W/src/audio/caching_tts.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config_env.cpp
+    - Lumina-BETA-RPI-2W/tests/test_caching_tts.cpp
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/docs/PI_RUNBOOK.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host (ctest: new invalid-value + cacheReady tests) and aarch64; redeploy lumina.
+    On device: confirm LUMINA_WARM_ONLY exits 0 with "cache '...' ready"; confirm a bad
+    LUMINA_AUDIO_* value logs the new WARN. Face recognition must remain enabled.
 ```

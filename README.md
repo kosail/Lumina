@@ -194,6 +194,11 @@ Runtime environment variables (all optional):
 | `LUMINA_LOG_LEVEL` | `trace`/`debug`/`info`/`warn`/`error`/`off` (default `info`) |
 | `PIPER_NUM_THREADS` | Piper/ONNX Runtime intra-op threads (default 3) |
 | `LUMINA_PHRASE_CACHE_DIR` | On-disk TTS phrase cache directory (default `$HOME/.cache/lumina/phrase-cache`) |
+| `LUMINA_WARM_ONLY` | `1`/`true` loads the models, renders any missing phrases, logs the cache size, and exits before the sink wait/pipeline — exit `0` = cache ready, `1` = cache dir unusable (pre-show cache check; CHG-0098/CHG-0099) |
+| `LUMINA_AUDIO_SHUTDOWN_ON_FAILURE` | `1` (default) powers the device off when the audio sink never appears (FR-06.1); `0` stops the runtime instead. The unit sets `0` for demos |
+| `LUMINA_AUDIO_SINK_MAX_RETRIES` | Audio-sink `open()` attempts before giving up (default `60`; the unit sets `10000` ≈ 8.3 h for demos) |
+| `LUMINA_AUDIO_SINK_RETRY_MS` | Pause between audio-sink `open()` attempts, ms (default `3000`) |
+| `LUMINA_PROXIMITY_ENABLED` | `0`/`false` disables the proximity sensor (default `true`) |
 | `ORT_DISABLE_TELEMETRY` | Set to `1` to silence ONNX Runtime telemetry. **Privacy: the runtime sets this in-process before ONNX Runtime initializes (CHG-0080); you do not need to export it, and Lúmina never phones home (INV-003/INV-034).** |
 
 ### Companion app (FR-11)
@@ -265,7 +270,8 @@ Recommended system tuning:
 
 1. Runtime skeleton, capture, detector, TTS-to-Bluetooth vertical slice (Day-2 gate). — **done**
 2. Alert arbiter + Spanish alert catalog (Day 3). — **done** (see `docs/PERFORMANCE.md` §11)
-3. Face enrollment and recognition (Day 4). — **implemented; on-device verification pending**
+3. Face enrollment and recognition (Day 4). — **implemented and verified on-device** (photos CHG-0073,
+   live camera CHG-0083; see `docs/FACE.md`)
 4. Boot-time Bluetooth autoconnect, soak testing, demo hardening. — **BT autoconnect + autostart
    implemented** (`scripts/bt_setup.sh`, `scripts/9-setup_autostart.sh`, runtime sink watchdog;
    see `docs/BLUETOOTH.md`, CHG-0077). The sink-watchdog `running`/`stop` polarity was fixed in

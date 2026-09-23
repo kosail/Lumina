@@ -53,6 +53,11 @@ public:
     // Returns the number of phrases newly rendered. Never throws.
     std::size_t warm(const std::vector<std::string>& phrases);
 
+    // True when the cache directory currently exists (i.e. warming can persist).
+    // A quiet check: it does NOT create the directory and does NOT log. Used by the
+    // LUMINA_WARM_ONLY pre-show gate to exit non-zero when the cache is unusable.
+    [[nodiscard]] bool cacheReady() const;
+
     [[nodiscard]] core::Status synthesize(std::string_view text,
                                           IAudioSink& sink,
                                           const std::atomic<bool>& stop) override;

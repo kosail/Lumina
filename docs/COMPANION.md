@@ -120,4 +120,5 @@ commands via `/etc/sudoers.d/lumina-agent`.
 
 - `docs/API_CONTRACT.md` — the authoritative wire contract (`docs/APP_PROTOCOL.md` is a short pointer).
 - `docs/FACE.md` — enrollment tool details.
-- `docs/PERFORMANCE.md` — the AP-vs-A2DP cost measurement (pending).
+- `docs/PERFORMANCE.md` — the AP-vs-A2DP cost measurement (out of scope for the current stage;
+  the single 2.4 GHz radio is shared with A2DP, so this is an accepted, not-yet-measured cost).

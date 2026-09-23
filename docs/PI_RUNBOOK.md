@@ -237,6 +237,37 @@ reports `reachable:false`, the file's mtime is older than ~5 s (runtime stopped)
 
 ---
 
+## 9b. Pre-show checklist (showcase day)
+
+Run this on the **exact demo unit** shortly before the presentation.
+
+```bash
+# 1. Models + phrase cache are hot (needs no earbuds or camera). Expect exit 0 and
+#    "cache '...' ready"; a "newly rendered" of 0 means it was already complete.
+#    Exit 1 means the cache directory is not writable (fix before the show).
+cd ~/lumina && LUMINA_WARM_ONLY=1 ./lumina \
+  models/yolo11n_ncnn_320x256 models/voices/es_MX-claude-high.onnx espeak-ng-data
+
+# 2. Both services are up.
+systemctl is-active lumina.service lumina-agent.service
+
+# 3. The hotspot address is the one the app uses (default 10.42.0.1).
+ip -4 addr show wlan0 | grep inet
+
+# 4. Earbuds are connected and the sink opened.
+amixer -D bluealsa scontrols                 # prints the A2DP control name
+journalctl -u lumina -b | grep -i 'audio sink ready'
+```
+
+- The deployed `lumina.service` sets `LUMINA_AUDIO_SHUTDOWN_ON_FAILURE=0` and
+  `LUMINA_AUDIO_SINK_MAX_RETRIES=10000`, so a missing earbud makes the runtime **wait, not power
+  the Pi off** (CHG-0098). Pair the earbuds before (or at) the Pi to avoid the wait.
+- Confirm the app connects and shows the enrolled people (**Personas**) and the runtime controls.
+- Optional soak (30–60 min): leave it running and watch `journalctl -u lumina -f` for
+  `speech failed`, and `/run/lumina/status` for a stalled FPS.
+
+---
+
 ## 10. Connect a client
 
 1. Join the **Lumina** hotspot from the phone/laptop.
@@ -272,7 +303,7 @@ Caps and the state machine: `API_CONTRACT.md` §6. Manual tool usage and tips: `
 | Runtime not reachable (`reachable:false`) | runtime stopped, or `/run/lumina/status` older than 5 s |
 | Runtime not restarted after enroll | the agent restarts it; if it reports `runtime:"absent"`, send `runtime.start` |
 | Camera enroll `error exitCode 2` | no frame captured within 60 s — lighting/distance/framing |
-| `lumina` exits at boot | no BlueALSA sink within 3 min (FR-06.1) — pair first (§5); exit code 2 is intentional |
+| `lumina` exits at boot | no BlueALSA sink within the retry budget (FR-06.1) — pair first (§5); exit code 2 is intentional. With the demo unit env (CHG-0098) it waits ~8.3 h instead of exiting |
 | Cross-build link errors | see `CROSS_COMPILE.md` §C2/C3 (sysroot and the Arch `--sysroot` gotcha) |
 
 ## 13. Stop / rotate

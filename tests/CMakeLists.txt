@@ -21,6 +21,7 @@ if(LUMINA_BUILD_TESTS)
         test_main.cpp
         test_bounded_queue.cpp
         test_config.cpp
+        test_config_env.cpp
         test_distance.cpp
         test_arbiter.cpp
         test_scene.cpp

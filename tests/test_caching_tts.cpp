@@ -114,3 +114,21 @@ TEST_CASE("CachingTts: a live miss is stored and then served from cache")
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("CachingTts: cacheReady reflects a usable cache directory")
+{
+    const std::filesystem::path dir = makeTempDir();
+    std::filesystem::remove_all(dir);
+
+    MockTtsEngine inner;
+    CachingTts tts(inner, PhraseCacheConfig{dir.string(), 4096, "test"});
+
+    // Quiet check: it does not create the directory, so it is false until warm().
+    CHECK_FALSE(tts.cacheReady());
+    CHECK_FALSE(std::filesystem::exists(dir));
+
+    CHECK(tts.warm({"hola"}) == 1);
+    CHECK(tts.cacheReady());
+
+    std::filesystem::remove_all(dir);
+}
