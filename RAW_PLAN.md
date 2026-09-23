@@ -327,6 +327,9 @@ runtime core network-free (INV-003/INV-034):
      runtime, back off face inference during the greeting cooldown (`faceCooldownBackoffFactor`),
      commit the cooldown only after the arbiter accepts the greeting, run NCNN on 3 threads, and warm
      both DNNs at load. True working set ~289 MB vs 447 MB usable — keep this margin in mind.
+8. Physical volume buttons (GPIO17/27, 5% steps, press-and-hold repeat) — **DEFERRED** indefinitely
+   by user decision (CHG-0095); review + approved design in `docs/DEFERRED.md` (D-001), prototype
+   archived at `docs/reference/volume_control_main.c`. Resume only on explicit user confirmation.
 
 ---
 

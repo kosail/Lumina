@@ -139,11 +139,12 @@ side: **ignore unknown keys** (forward compatibility).
       "type": "object",
       "required": ["reachable", "running", "uptimeS", "sink", "faceCount"],
       "properties": {
-        "reachable": { "type": "boolean", "description": "false when the runtime status file is older than 5 s (runtime stopped/crashed)" },
-        "running":   { "type": "boolean" },
-        "uptimeS":   { "type": "integer", "minimum": 0 },
-        "sink":      { "type": "string", "enum": ["ready", "waiting", "absent"] },
-        "faceCount": { "type": "integer", "minimum": 0, "description": "number of enrolled people" }
+        "reachable":    { "type": "boolean", "description": "false when the runtime status file is older than 5 s (runtime stopped/crashed)" },
+        "running":      { "type": "boolean", "description": "the runtime's own status says it is running; false while initialize is still in progress" },
+        "initializing": { "type": "boolean", "description": "additive/optional; true when lumina.service is active but has not yet reported a fresh running status (model load + BlueALSA sink wait can take ~18-60 s). Treat this as 'starting': render it instead of 'stopped' and disable start/stop until it clears." },
+        "uptimeS":      { "type": "integer", "minimum": 0 },
+        "sink":         { "type": "string", "enum": ["ready", "waiting", "absent"] },
+        "faceCount":    { "type": "integer", "minimum": 0, "description": "number of people in the enrolled store; available even when the runtime is stopped" }
       }
     },
     "core": {
@@ -168,7 +169,7 @@ side: **ignore unknown keys** (forward compatibility).
     },
     "people": {
       "type": "array", "items": { "type": "string" },
-      "description": "enrolled names in insertion order; [] when the runtime is unreachable"
+      "description": "enrolled names in insertion order, read from the device's persisted face store; available even when the runtime is stopped"
     },
     "enroll": {
       "oneOf": [
@@ -191,15 +192,16 @@ side: **ignore unknown keys** (forward compatibility).
 `APP RECEIVES` example:
 
 ```json
-{"t":"status","proto":1,"ts":1690000000,"runtime":{"reachable":true,"running":true,"uptimeS":62,"sink":"ready","faceCount":2},"core":{"fps":4.3,"rssMb":218.0,"memAvailableKb":65536,"tempC":46.2,"load1":1.80},"sensors":{"volume":70,"muted":false,"luma":0.420,"dayNight":"day"},"people":["David Solís"],"enroll":{"active":false}}
+{"t":"status","proto":1,"ts":1690000000,"runtime":{"reachable":true,"running":true,"initializing":false,"uptimeS":62,"sink":"ready","faceCount":2},"core":{"fps":4.3,"rssMb":218.0,"memAvailableKb":65536,"tempC":46.2,"load1":1.80},"sensors":{"volume":70,"muted":false,"luma":0.420,"dayNight":"day"},"people":["David Solís"],"enroll":{"active":false}}
 ```
 
 Rules:
 - **Unknown values:** `volume:-1`, `luma:-1.000` (⇒ `dayNight:"unknown"`), `tempC/load1/memAvailableKb:null`.
   Render as "—"; do not coerce to 0.
-- When `runtime.reachable == false`: `running=false`, `uptimeS=0`, `sink="absent"`, `faceCount=0`,
-  `people=[]`, `fps=0.0`, `rssMb=0.0`, `luma=-1.000`. The `core` OS fields (mem/temp/load) are still
-  filled when readable.
+- When `runtime.reachable == false`: `running=false`, `uptimeS=0`, `sink="absent"`, `fps=0.0`,
+  `rssMb=0.0`, `luma=-1.000`. `people`/`faceCount` still reflect the enrolled store (they do not
+  require a running runtime). `initializing` is `true` while `lumina.service` is active but has not
+  yet reported a fresh running status. The `core` OS fields (mem/temp/load) stay filled when readable.
 - All strings are JSON-escaped; names may contain UTF-8 (e.g. `Solís`).
 
 ### 4.2 `volume.state` (reply to `volume.get/set/mute`)
@@ -232,9 +234,9 @@ Example: `{"t":"volume.state","ok":true,"value":70,"muted":false}`
 
 Example: `{"t":"people","names":["David Solís"]}`
 
-> Note: `people.list` reads the device's status file **regardless of age**, so it can return the
-> **last-known** names even when `runtime.reachable` is false. Telemetry `people` is `[]` in that
-> case. Prefer telemetry for the live list; use `people.list` for an on-demand refresh after enroll.
+> Note: `people.list` lists the enrolled store, so it returns the real registered names even when the
+> runtime is stopped or `runtime.reachable` is false; it only falls back to the runtime's status file
+> when the store cannot be read. Telemetry `people` is sourced the same way, so both agree.
 
 ### 4.4 `runtime.state` (reply to `runtime.state/start/stop`)
 
@@ -243,14 +245,18 @@ Example: `{"t":"people","names":["David Solís"]}`
   "$id": "https://lumina/contract/runtime-state.json",
   "type": "object", "required": ["t", "running", "sink"],
   "properties": {
-    "t":       { "const": "runtime.state" },
-    "running": { "type": "boolean" },
-    "sink":    { "type": "string", "enum": ["ready", "waiting", "absent"] }
+    "t":            { "const": "runtime.state" },
+    "running":      { "type": "boolean", "description": "`systemctl is-active lumina`; true as soon as the unit is active, before the runtime is ready" },
+    "initializing": { "type": "boolean", "description": "additive; true when the unit is active but a fresh running status has not arrived yet. Older clients ignore unknown keys" },
+    "sink":         { "type": "string", "enum": ["ready", "waiting", "absent"], "description": "only meaningful once running and not initializing" }
   }
 }
 ```
 
-Example: `{"t":"runtime.state","running":true,"sink":"ready"}`
+Example: `{"t":"runtime.state","running":true,"initializing":false,"sink":"ready"}`
+
+> `initializing` was added additively in `proto` 1 (CHG-0091). The wire shape only gained an optional
+> key, so existing clients that ignore unknown keys keep working.
 
 ### 4.5 `enroll.progress` (streamed)
 
@@ -568,7 +574,9 @@ Do / Don't:
 | Condition | Signal | Client behavior |
 |---|---|---|
 | Offline device | no `status` for 5 s | show "Sin conexión"; keep re-subscribing + reconnect TCP with backoff |
-| Runtime down | `runtime.reachable=false` | disable control that needs the runtime; offer `runtime.start` |
+| Runtime starting | `runtime.initializing=true` | show "Iniciando…"; disable start/stop until it clears (up to ~60 s; the sink wait can take ~3 min). A runtime started externally (systemd `Restart=`, post-enrollment) is reported within ~30 s |
+| Runtime down | `runtime.reachable=false` (and not initializing) | disable control that needs the runtime; offer `runtime.start` |
+| People while stopped | `runtime.reachable=false` but `people` non-empty | still list the registered people (they come from the store) |
 | Mixer unknown | `sensors.volume=-1` | show "—"; still allow `volume.set` |
 | No earbud sink | `runtime.sink != "ready"` | warn "Audio no listo" |
 | `unauthorized` | `error.code` | prompt for token; reconnect |

@@ -242,6 +242,8 @@ if(LUMINA_BUILD_AGENT)
         src/agent/telemetry.cpp
         src/agent/amixer.cpp
         src/agent/enroll.cpp
+        src/agent/face_names.cpp
+        src/agent/runtime_state.cpp
         src/agent/command_runner.cpp)
     target_include_directories(lumina_agent_core PUBLIC src)
     target_compile_options(lumina_agent_core PUBLIC -Wall -Wextra -Wpedantic)

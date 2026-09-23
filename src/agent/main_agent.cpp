@@ -125,6 +125,11 @@ int main()
     config.broadcastAddress = envOr("LUMINA_AGENT_BROADCAST", config.broadcastAddress);
     config.enrollImagesStopRuntime = envFlag("LUMINA_AGENT_ENROLL_STOP_RUNTIME",
                                              config.enrollImagesStopRuntime);
+    // Retry the control bind while the hotspot gateway address comes up (CHG-0094).
+    config.controlBindMaxAttempts =
+        envInt("LUMINA_AGENT_BIND_RETRIES", config.controlBindMaxAttempts);
+    config.controlBindRetryIntervalMs =
+        envInt("LUMINA_AGENT_BIND_RETRY_MS", config.controlBindRetryIntervalMs);
     // Stage image enrollment on disk, not in /run (tmpfs), to protect RAM (INV-052).
     config.enrollTempDir = home + "/.cache/lumina/enroll";
     config.enroll.binary = home + "/lumina_enroll";

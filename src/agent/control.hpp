@@ -36,9 +36,10 @@ public:
     ControlServer(const ControlServer&) = delete;
     ControlServer& operator=(const ControlServer&) = delete;
 
-    // Bind + listen + start the accept thread. Returns false (after logging) on
-    // failure.
-    [[nodiscard]] bool start();
+    // Bind + listen + start the accept thread. Returns false on failure. `logFailure` is false
+    // when a caller is retrying the bind on purpose (e.g. waiting for the hotspot address at boot),
+    // so the expected "Cannot assign requested address" is not logged on every attempt (CHG-0094).
+    [[nodiscard]] bool start(bool logFailure = true);
     // Signal the accept loop to finish, then join it (and all connections).
     void stop();
 

@@ -212,6 +212,10 @@ unit** (systemd reads them only at service start), run this **after §6**, and *
 app keeps working. If you run it before the hotspot exists it falls back to `0.0.0.0` /
 `255.255.255.255`; with the address pinned in §6 the AP address is stable, so this normally runs once.
 
+At boot the agent now **retries the control bind for up to ~60 s** (`LUMINA_AGENT_BIND_RETRIES` ×
+`LUMINA_AGENT_BIND_RETRY_MS`), so it no longer matters whether the hotspot gateway address exists
+before the service starts (CHG-0094); `Restart=on-failure` remains as a backstop.
+
 ```bash
 cat ~/lumina/agent.token        # same token, if you need it again
 ```

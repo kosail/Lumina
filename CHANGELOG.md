@@ -3224,4 +3224,252 @@
     particular confirm the pinned AP address actually comes up as 10.42.0.1/24 after the re-activation.
     Optional later (user-deferred): a scripts/0-setup_hotspot.sh wrapper that runs the create + pin +
     autoconnect steps.
+
+# ---------------------------------------------------------------------------
+# CHG-0090 — Agent lists enrolled people from the persisted face store
+# ---------------------------------------------------------------------------
+- id: CHG-0090
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-001, INV-034, INV-070]
+  supersedes: null
+  summary: >-
+    The companion agent now reads the enrolled-person names from the persisted face store
+    (models/face/embeddings.bin) instead of only the runtime's live status file, so telemetry
+    `people`/`faceCount` and the `people.list` reply are correct even while lumina.service is
+    stopped. Added src/agent/face_names.{hpp,cpp}: a dependency-free reader of the LUMFACE1 layout
+    (magic, version, dimension, modelId, person count, then per person a name + embedding count +
+    skipped embeddings), with the same sanity caps as FaceStore so a corrupt/hostile file cannot
+    trigger a large allocation. The agent caches the names and re-reads only when the store's
+    mtime/size change (guarded by a mutex; telemetry + control both read it). `enroll.done` now
+    reports the store's count immediately instead of the lagging status-file faceCount. Updated
+    docs/API_CONTRACT.md §4.1/§4.3 (people description + the reachable==false rules) and
+    docs/COMPANION.md §4.
+  rationale: >-
+    The app showed "Aún no hay personas registradas" whenever the runtime was stopped, even though
+    people were enrolled: the agent derived `people` only from /run/lumina/status, which the runtime
+    writes only while it runs (and which tmpfs drops on reboot). The store is the durable source of
+    truth and FaceStore::names() is pure C++ (no OpenCV), so a tiny standalone reader keeps the agent
+    free of the heavy runtime dependencies. Re-reading is gated on stat so the 1 Hz telemetry loop
+    does not re-parse the file every second.
+  files:
+    - Lumina-BETA-RPI-2W/src/agent/face_names.hpp
+    - Lumina-BETA-RPI-2W/src/agent/face_names.cpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.hpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.cpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/test_agent.cpp
+    - Lumina-BETA-RPI-2W/docs/API_CONTRACT.md
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Host test suite adds a FaceStore -> reader round-trip plus truncated/wrong-magic rejection.
+    Verify on the Pi that the app lists people while the runtime is stopped and that a camera
+    enrollment updates the list immediately.
+
+# ---------------------------------------------------------------------------
+# CHG-0091 — Agent exposes an additive `initializing` runtime state
+# ---------------------------------------------------------------------------
+- id: CHG-0091
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-001, INV-034, INV-070]
+  supersedes: null
+  summary: >-
+    Added an additive `initializing` boolean to both the telemetry `status.runtime` object and the
+    `runtime.state` reply. It is true when `systemctl is-active lumina` is active but the runtime has
+    not yet reported a fresh running status (model load + the up-to-3-minute BlueALSA sink wait;
+    ~18-60 s in practice). The agent caches `is-active` and probes at a low rate (5 s while starting,
+    30 s while known down, never while healthy; see CHG-0092) so it does not spawn systemctl every
+    telemetry tick on the Pi Zero; the control handler probes once per request and keeps the cache in
+    step. The
+    `runtime.state.sink` value now requires a fresh, running status. Updated docs/API_CONTRACT.md
+    §4.1/§4.4/§9 and docs/COMPANION.md §4.
+  rationale: >-
+    After tapping "Iniciar Lúmina" the app re-enabled the button immediately because telemetry
+    `running` is sourced from the status file, which is empty while the runtime loads; `systemctl
+    is-active` flips true within milliseconds, so the two channels disagreed and the user could
+    re-send start during the ~18-60 s startup. An explicit `initializing` flag lets any client show
+    "starting" and disable commands without guessing. It is additive (an optional key), so `proto`
+    stays 1 and older clients that ignore unknown keys keep working (API_CONTRACT §10).
+  files:
+    - Lumina-BETA-RPI-2W/src/agent/agent.hpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.cpp
+    - Lumina-BETA-RPI-2W/src/agent/telemetry.hpp
+    - Lumina-BETA-RPI-2W/src/agent/telemetry.cpp
+    - Lumina-BETA-RPI-2W/tests/test_agent.cpp
+    - Lumina-BETA-RPI-2W/docs/API_CONTRACT.md
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    The companion app (separate repo) consumes `initializing` in Part B: a tri-state start/stop
+    control that disables the toggle until ready. Host tests cover the telemetry serialization of the
+    flag; verify the transition timing on the Pi.
+
+# ---------------------------------------------------------------------------
+# CHG-0092 — Second-pass hardening of the agent people/readiness code
+# ---------------------------------------------------------------------------
+- id: CHG-0092
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-001, INV-034, INV-070]
+  supersedes: null
+  summary: >-
+    Aggressive second-pass review of CHG-0090/0091 fixed four robustness gaps and closed a test
+    gap. (F1) Extracted the liveness/readiness decision into a pure, unit-tested helper
+    (src/agent/runtime_state.{hpp,cpp}) and changed the probe policy to 5 s while starting, 30 s
+    while known down, never while healthy, so an externally started runtime (systemd Restart=,
+    a manual start, or the restart after a camera enrollment) is no longer missed; the camera and
+    image enrollment paths now update the cached liveness on their stop/restart phases. (F2) The
+    people cache identity now includes the store's inode, because enrollment rewrites via
+    temp + rename and mtime+size can collide on coarse-mtime filesystems. (F3) enrolledNames()
+    requires S_ISREG, so a replaced FIFO/device cannot block the telemetry thread on open.
+    (F5) The `systemctl is-active` probe now runs outside m_runtimeStateMutex; a generation counter
+    discards a stale decision if another thread changed the state while probing. (F6) Added unit
+    tests for the probe schedule and the initializing transitions. The agent reader's 64 MiB cap was
+    deliberately left unchanged (user decision). Updated docs/API_CONTRACT.md §9 and
+    docs/COMPANION.md §4, and corrected the CHG-0091 probe-rate wording.
+  rationale: >-
+    The first pass was correct but had a latent latching bug (once Inactive, the agent never probed
+    again, so it could not report initializing for starts it did not initiate — including the
+    enrollment restart the app relies on) and an untested state machine despite the plan calling for
+    a pure helper. The inode/regular-file hardening is cheap and removes two unlikely-but-real
+    failure modes on the device. Moving the probe off the lock avoids a slow systemd spawn delaying a
+    control reply, with the generation counter preventing the read-modify-write race that would
+    otherwise let a stale telemetry decision revert a fresh control update. No protocol shape
+    changed; `initializing` remains additive and `proto` stays 1.
+  files:
+    - Lumina-BETA-RPI-2W/src/agent/runtime_state.hpp
+    - Lumina-BETA-RPI-2W/src/agent/runtime_state.cpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.hpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.cpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/test_agent.cpp
+    - Lumina-BETA-RPI-2W/docs/API_CONTRACT.md
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Re-run `ctest --preset host` (new `agent runtime readiness` test) and cross-build. On the Pi,
+    confirm a camera enrollment reports initializing during the post-enrollment restart and that the
+    people list survives throughout. Part B (the app) is next.
+
+# ---------------------------------------------------------------------------
+# CHG-0093 — Telemetry sends the -1 volume sentinel, never null
+# ---------------------------------------------------------------------------
+- id: CHG-0093
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-001, INV-034, INV-070]
+  supersedes: null
+  summary: >-
+    src/agent/telemetry.cpp now serializes an unknown volume as the integer -1 (the contract §4.1
+    sentinel) instead of JSON null. Previously `buildTelemetryJson` emitted `"volume":null` when
+    `amixer` could not read the BlueALSA mixer, while `volume.state` already used -1 — an internal
+    inconsistency that violated §4.1.
+  rationale: >-
+    Contract-following clients declare `sensors.volume` as a required non-null integer and rely on the
+    -1 sentinel; a `null` made kotlinx-serialization reject the entire datagram, so the companion app
+    dropped every 1 Hz frame and showed "Sin Conexión" whenever the earbuds/mixer were unavailable
+    (e.g. runtime stopped with no A2DP sink). Verified against the live agent's datagram and the app's
+    decoder (StatusDecode -> Malformed -> ignored). The app is also hardened in FE CHG-FE-0038; this
+    entry fixes the wire so both sides agree.
+  files:
+    - Lumina-BETA-RPI-2W/src/agent/telemetry.cpp
+    - Lumina-BETA-RPI-2W/tests/test_agent.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild + redeploy `lumina_agent`; confirm a datagram captured with the earbuds off contains
+    `"volume":-1`.
+
+# ---------------------------------------------------------------------------
+# CHG-0094 — Retry the control bind while the hotspot address comes up
+# ---------------------------------------------------------------------------
+- id: CHG-0094
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-001, INV-070]
+  supersedes: null
+  summary: >-
+    Agent::start() now retries the TCP control bind for a bounded window instead of exiting on the
+    first failure. At boot the hotspot gateway address may not exist yet, so binding it fails with
+    EADDRNOTAVAIL; the agent previously exited (status=1) and relied on systemd Restart=on-failure,
+    logging the error on every restart. It now recreates the ControlServer and retries
+    `controlBindMaxAttempts` (default 60) times, `controlBindRetryIntervalMs` (default 1000 ms) apart,
+    logging only the first failure; the new pure helper shouldRetryControlBind() is unit-tested.
+    ControlServer::start() gained a `logFailure` flag so the expected failure is not logged per
+    attempt. Tunable via LUMINA_AGENT_BIND_RETRIES / LUMINA_AGENT_BIND_RETRY_MS.
+  rationale: >-
+    Observed on the device: 5 failed starts then success once the AP was up (~30 s), which the app saw
+    as a device that was simply offline. Retrying in-process removes the dependency on systemd/AP
+    ordering and the noisy journal; Restart=on-failure stays as a backstop. The UDP socket binds
+    0.0.0.0 so only the control bind is address-dependent.
+  files:
+    - Lumina-BETA-RPI-2W/src/agent/bind_retry.hpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.hpp
+    - Lumina-BETA-RPI-2W/src/agent/agent.cpp
+    - Lumina-BETA-RPI-2W/src/agent/control.hpp
+    - Lumina-BETA-RPI-2W/src/agent/control.cpp
+    - Lumina-BETA-RPI-2W/src/agent/main_agent.cpp
+    - Lumina-BETA-RPI-2W/tests/test_agent.cpp
+    - Lumina-BETA-RPI-2W/docs/COMPANION.md
+    - Lumina-BETA-RPI-2W/docs/PI_RUNBOOK.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Reboot the Pi and confirm the journal shows a single bind failure then a successful bind with no
+    restart loop.
+
+# ---------------------------------------------------------------------------
+# CHG-0095 — Defer the physical volume buttons indefinitely
+# ---------------------------------------------------------------------------
+- id: CHG-0095
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: decision
+  status: proposed
+  invariants: [INV-001, INV-070]
+  supersedes: null
+  summary: >-
+    Decided to defer the physical volume-buttons feature (two GPIO push-buttons, 5% steps,
+    press-and-hold repeat) indefinitely, pending explicit manual user confirmation. Recorded the
+    decision and the reviewed design in a new append-only registry docs/DEFERRED.md (entry D-001),
+    archived the teammate prototype at docs/reference/volume_control_main.c (moved out of the
+    temporary top-level volume_control/, which is removed), and added a nice-to-have line to
+    RAW_PLAN.md. No runtime/agent code changed.
+  rationale: >-
+    Strict schedule constraints; the feature is not required for the beta and the decision to build
+    it is postponed. Capturing the review now avoids re-deriving it later: the prototype cannot work
+    as written because (1) it targets `amixer -D pulse Master` instead of this project's
+    `-D bluealsa` + dynamically discovered A2DP control (INV-014), (2) it uses the libgpiod v1 API
+    that v2.0 removed while trixie ships v2.x, and (3) GPIO17/GPIO27 are reserved for the proximity
+    XSHUT lines (INV-075) — the user confirmed XSHUT is not wired and the rear sensor is not built,
+    so they are currently free but must be re-checked on resume. The approved approach, if resumed,
+    is to fold the buttons into lumina_agent (reusing AmixerVolume/ICommandRunner/m_volumeMutex)
+    rather than run a second process; libgpiod (new dependency, INV-022) is already approved.
+  files:
+    - Lumina-BETA-RPI-2W/docs/DEFERRED.md
+    - Lumina-BETA-RPI-2W/docs/reference/volume_control_main.c
+    - Lumina-BETA-RPI-2W/RAW_PLAN.md
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None until the user confirms resuming. Then: re-check GPIO17/27 are free, install libgpiod-dev
+    on the Pi and re-sync the cross sysroot (verify libgpiod >= 2.0), grant the agent user gpio
+    access, and implement Option A per docs/DEFERRED.md D-001.
 ```

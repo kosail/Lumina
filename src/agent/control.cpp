@@ -41,7 +41,7 @@ ControlServer::~ControlServer()
     stop();
 }
 
-bool ControlServer::start()
+bool ControlServer::start(bool logFailure)
 {
     m_listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (m_listenFd < 0) {
@@ -65,7 +65,9 @@ bool ControlServer::start()
     }
 
     if (::bind(m_listenFd, reinterpret_cast<struct sockaddr*>(&address), sizeof(address)) != 0) {
-        LUMINA_LOG_ERROR("agent: control bind(:{}) failed: {}", m_port, std::strerror(errno));
+        if (logFailure) {
+            LUMINA_LOG_ERROR("agent: control bind(:{}) failed: {}", m_port, std::strerror(errno));
+        }
         ::close(m_listenFd);
         m_listenFd = -1;
         return false;

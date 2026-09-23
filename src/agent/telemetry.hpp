@@ -45,6 +45,7 @@ struct TelemetryState {
     long long ts = 0;              // agent epoch seconds (best effort; see RTC note)
     bool runtimeReachable = false;
     bool running = false;
+    bool initializing = false;      // active but not yet reporting a fresh running status
     int uptimeS = 0;
     std::string sink = "absent";   // "ready" | "waiting" | "absent"
     std::size_t faceCount = 0;

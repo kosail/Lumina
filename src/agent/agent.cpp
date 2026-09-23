@@ -18,6 +18,8 @@
 #include <utility>
 #include <vector>
 
+#include "agent/bind_retry.hpp"
+#include "agent/face_names.hpp"
 #include "agent/json.hpp"
 #include "core/logging.hpp"
 
@@ -98,13 +100,37 @@ bool Agent::start()
     if (!m_udp.open()) {
         return false;
     }
-    m_control = std::make_unique<ControlServer>(
-        m_config.controlPort, m_config.bindAddress,
-        [this](const std::string& line, const ReplyFn& reply) { return handleRequest(line, reply); });
-    if (!m_control->start()) {
+
+    const RequestHandler handler =
+        [this](const std::string& line, const ReplyFn& reply) { return handleRequest(line, reply); };
+
+    // The hotspot gateway address may not exist yet at boot, so the TCP bind can fail with
+    // "Cannot assign requested address". Retry for a bounded window instead of exiting, so the app
+    // can connect as soon as the AP is up without waiting for a systemd restart (CHG-0094). Only the
+    // first failure is logged, to avoid a line per attempt.
+    bool bound = false;
+    for (int attempt = 1; attempt <= m_config.controlBindMaxAttempts; ++attempt) {
+        m_control = std::make_unique<ControlServer>(m_config.controlPort, m_config.bindAddress, handler);
+        if (m_control->start(/*logFailure=*/attempt == 1)) {
+            bound = true;
+            break;
+        }
+        if (attempt == 1 || attempt % 10 == 0) {
+            LUMINA_LOG_WARN("agent: control bind not ready (attempt {}/{}); retrying in {} ms", attempt,
+                            m_config.controlBindMaxAttempts, m_config.controlBindRetryIntervalMs);
+        }
+        if (!shouldRetryControlBind(attempt, m_config.controlBindMaxAttempts)) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(m_config.controlBindRetryIntervalMs));
+    }
+    if (!bound) {
+        LUMINA_LOG_ERROR("agent: could not bind control after {} attempt(s)",
+                         m_config.controlBindMaxAttempts);
         m_udp.close();
         return false;
     }
+
     m_udpThread = std::jthread([this](std::stop_token token) { udpLoop(token); });
     m_telemetryThread = std::jthread([this](std::stop_token token) { telemetryLoop(token); });
     return true;
@@ -218,6 +244,84 @@ std::optional<RuntimeStatus> Agent::readRuntimeStatus()
     return parseStatusBlock(*text);
 }
 
+std::vector<std::string> Agent::enrolledNames()
+{
+    const std::lock_guard<std::mutex> lock(m_namesMutex);
+
+    // Stat the store to detect a change cheaply. Enrollment rewrites the file via
+    // temp + rename, so its mtime and inode advance; the 1 Hz telemetry loop then
+    // re-reads only when something actually changed. Requiring a regular file also
+    // stops a replaced FIFO/device from blocking the open (F3).
+    struct stat info {};
+    if (::stat(m_config.enroll.store.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) {
+        m_namesCache.clear();
+        m_namesValid = false;
+        m_namesMtime = -1;
+        m_namesSize = 0;
+        m_namesInode = 0;
+        return {};
+    }
+
+    const std::int64_t mtime = static_cast<std::int64_t>(info.st_mtime);
+    const std::uintmax_t size = static_cast<std::uintmax_t>(info.st_size);
+    const std::uintmax_t inode = static_cast<std::uintmax_t>(info.st_ino);
+    if (!m_namesValid || mtime != m_namesMtime || size != m_namesSize || inode != m_namesInode) {
+        m_namesCache = readEnrolledNames(m_config.enroll.store);
+        m_namesMtime = mtime;
+        m_namesSize = size;
+        m_namesInode = inode;
+        m_namesValid = true;
+    }
+    return m_namesCache;
+}
+
+void Agent::setRuntimeLiveness(RuntimeLiveness liveness)
+{
+    const std::lock_guard<std::mutex> lock(m_runtimeStateMutex);
+    m_runtimeLiveness = liveness;
+    m_lastActiveProbe = std::chrono::steady_clock::now();
+    ++m_runtimeStateGeneration;
+}
+
+bool Agent::runtimeInitializing(bool ready)
+{
+    const auto now = std::chrono::steady_clock::now();
+
+    // Snapshot the timing state, then probe outside the lock so a slow
+    // `systemctl is-active` cannot delay a concurrent control reply (F5).
+    RuntimeLiveness liveness = RuntimeLiveness::Unknown;
+    std::uint64_t generation = 0;
+    std::chrono::seconds sinceProbe{0};
+    {
+        const std::lock_guard<std::mutex> lock(m_runtimeStateMutex);
+        liveness = m_runtimeLiveness;
+        generation = m_runtimeStateGeneration;
+        sinceProbe = std::chrono::duration_cast<std::chrono::seconds>(now - m_lastActiveProbe);
+    }
+
+    const bool probeDue = runtimeProbeDue(liveness, sinceProbe);
+    bool activeProbe = false;
+    if (probeDue) {
+        activeProbe = m_runtime.isRunning();
+    }
+
+    const RuntimeReadiness readiness =
+        evaluateRuntimeReadiness(RuntimeReadinessInput{liveness, ready, probeDue, activeProbe});
+
+    {
+        const std::lock_guard<std::mutex> lock(m_runtimeStateMutex);
+        // Discard our decision if another thread changed the state while we probed.
+        if (m_runtimeStateGeneration == generation) {
+            m_runtimeLiveness = readiness.liveness;
+            if (probeDue || ready) {
+                m_lastActiveProbe = now;
+            }
+            ++m_runtimeStateGeneration;
+        }
+    }
+    return readiness.initializing;
+}
+
 TelemetryState Agent::collectState()
 {
     TelemetryState state;
@@ -227,18 +331,29 @@ TelemetryState Agent::collectState()
     const std::optional<double> age = fileAgeSeconds(m_config.statusPath);
     const bool fresh = age.has_value() && *age <= static_cast<double>(m_config.statusStaleSeconds);
     state.runtimeReachable = fresh && status.has_value();
-    if (status.has_value() && state.runtimeReachable) {
+    const bool ready = state.runtimeReachable && status.has_value() && status->running;
+    if (state.runtimeReachable) {
         state.running = status->running;
         state.uptimeS = status->uptimeSeconds;
         state.fps = status->fps;
         state.rssMb = status->rssMb;
         state.luma = status->meanLuma;
-        state.faceCount = status->faceCount;
-        state.people = status->people;
         state.sink = status->sinkReady ? "ready" : "waiting";
     } else {
         state.sink = "absent";
     }
+    state.initializing = runtimeInitializing(ready);
+
+    // Enrolled people come from the persisted face store, not the live status file,
+    // so the list is correct even while the runtime is stopped (the runtime only
+    // writes person= lines while it runs). Fall back to the status file when the
+    // store is unreadable but the runtime is up.
+    std::vector<std::string> names = enrolledNames();
+    if (names.empty() && state.runtimeReachable) {
+        names = status->people;
+    }
+    state.people = std::move(names);
+    state.faceCount = state.people.size();
 
     if (const std::optional<std::string> thermal = readWholeFile(m_config.thermalPath)) {
         state.tempC = parseThermalC(*thermal);
@@ -361,30 +476,46 @@ void Agent::handleVolumeMute(bool value, const ReplyFn& reply)
 
 void Agent::handlePeopleList(const ReplyFn& reply)
 {
-    const std::optional<RuntimeStatus> status = readRuntimeStatus();
-    std::string names = "[";
-    if (status.has_value()) {
-        for (std::size_t i = 0; i < status->people.size(); ++i) {
-            if (i > 0) {
-                names += ",";
-            }
-            names += "\"" + escapeJson(status->people[i]) + "\"";
+    // The enrolled store is authoritative and available even when the runtime is
+    // stopped, so the app still sees the registered people. Fall back to the live
+    // status file only if the store cannot be read.
+    std::vector<std::string> names = enrolledNames();
+    if (names.empty()) {
+        if (const std::optional<RuntimeStatus> status = readRuntimeStatus()) {
+            names = status->people;
         }
     }
-    names += "]";
-    reply(std::format("{{\"t\":\"people\",\"names\":{}}}", names));
+    std::string json = "[";
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (i > 0) {
+            json += ",";
+        }
+        json += "\"" + escapeJson(names[i]) + "\"";
+    }
+    json += "]";
+    reply(std::format("{{\"t\":\"people\",\"names\":{}}}", json));
 }
 
 void Agent::handleRuntimeState(const ReplyFn& reply)
 {
     const bool running = m_runtime.isRunning();
+    // Keep the cached liveness in step so telemetry agrees with this reply.
+    setRuntimeLiveness(running ? RuntimeLiveness::Active : RuntimeLiveness::Inactive);
+
     const std::optional<RuntimeStatus> status = readRuntimeStatus();
+    const std::optional<double> age = fileAgeSeconds(m_config.statusPath);
+    const bool fresh = age.has_value() && *age <= static_cast<double>(m_config.statusStaleSeconds);
+    const bool ready = fresh && status.has_value() && status->running;
+
     std::string sink = "absent";
-    if (running && status.has_value()) {
+    if (ready) {
         sink = status->sinkReady ? "ready" : "waiting";
     }
-    reply(std::format("{{\"t\":\"runtime.state\",\"running\":{},\"sink\":\"{}\"}}", boolJson(running),
-                      sink));
+    const bool initializing = running && !ready;
+
+    reply(std::format(
+        "{{\"t\":\"runtime.state\",\"running\":{},\"initializing\":{},\"sink\":\"{}\"}}",
+        boolJson(running), boolJson(initializing), sink));
 }
 
 void Agent::handleRuntimeStart(const ReplyFn& reply)
@@ -427,6 +558,14 @@ void Agent::handleEnrollCamera(const std::string& name, long long frames, const 
         switch (event.kind) {
         case EnrollEvent::Kind::Phase:
             {
+                // The camera orchestrator stops the runtime before capture and always
+                // restarts it; mirror that in the cached liveness so telemetry shows
+                // "stopped" during capture and "initializing" during the restart (F1).
+                if (event.message == "stopping_runtime") {
+                    setRuntimeLiveness(RuntimeLiveness::Inactive);
+                } else if (event.message == "starting_runtime") {
+                    setRuntimeLiveness(RuntimeLiveness::Active);
+                }
                 const std::lock_guard<std::mutex> lock(m_stateMutex);
                 m_enrollPhase = event.message;
             }
@@ -472,8 +611,14 @@ void Agent::handleEnrollCamera(const std::string& name, long long frames, const 
     enrollLock.unlock();
 
     if (exitCode == 0) {
-        const std::optional<RuntimeStatus> status = readRuntimeStatus();
-        const std::size_t personCount = status.has_value() ? status->faceCount : 0;
+        // Read the store directly: after a successful enrollment the runtime's
+        // status file may not have refreshed yet, so its faceCount can lag.
+        std::size_t personCount = enrolledNames().size();
+        if (personCount == 0) {
+            if (const std::optional<RuntimeStatus> status = readRuntimeStatus()) {
+                personCount = status->faceCount;
+            }
+        }
         reply(std::format("{{\"t\":\"enroll.done\",\"ok\":true,\"personCount\":{},\"embeddingsAdded\":{}}}",
                           personCount, captured));
     } else {
@@ -559,6 +704,7 @@ void Agent::handleEnrollImages(const std::string& name, const std::string& image
     // to protect RAM on the board. Off by default (the runtime keeps running).
     const bool stopRuntime = m_config.enrollImagesStopRuntime;
     if (stopRuntime) {
+        setRuntimeLiveness(RuntimeLiveness::Inactive);
         m_runtime.stop();
     }
 
@@ -595,6 +741,7 @@ void Agent::handleEnrollImages(const std::string& name, const std::string& image
     std::filesystem::remove_all(directory, filesystemError);
     if (stopRuntime) {
         m_runtime.start();  // always restore the runtime if we stopped it
+        setRuntimeLiveness(RuntimeLiveness::Active);
     }
 
     {
@@ -604,8 +751,14 @@ void Agent::handleEnrollImages(const std::string& name, const std::string& image
     }
 
     if (exitCode == 0) {
-        const std::optional<RuntimeStatus> status = readRuntimeStatus();
-        const std::size_t personCount = status.has_value() ? status->faceCount : 0;
+        // Read the store directly: after a successful enrollment the runtime's
+        // status file may not have refreshed yet, so its faceCount can lag.
+        std::size_t personCount = enrolledNames().size();
+        if (personCount == 0) {
+            if (const std::optional<RuntimeStatus> status = readRuntimeStatus()) {
+                personCount = status->faceCount;
+            }
+        }
         reply(std::format("{{\"t\":\"enroll.done\",\"ok\":true,\"personCount\":{},\"embeddingsAdded\":{}}}",
                           personCount, captured));
     } else {

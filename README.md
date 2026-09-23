@@ -99,6 +99,7 @@ cmake/          aarch64 toolchain and find-modules
 | [`docs/PI_RUNBOOK.md`](docs/PI_RUNBOOK.md) | Bring up a real device end to end: build, deploy, hotspot, runtime + agent services, verify, connect the app |
 | [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | **Authoritative** companion wire contract (schemas, commands, Kotlin notes) for FR-11 |
 | [`docs/APP_PROTOCOL.md`](docs/APP_PROTOCOL.md) | Short pointer/summary of the companion protocol (superseded) |
+| [`docs/DEFERRED.md`](docs/DEFERRED.md) | Deferred work registry — intentionally postponed features; do not implement without user confirmation |
 
 Source-of-truth order: `INVARIANTS.md` > `SPECS.md` > `RAW_PLAN.md` > `AGENTS.md` > code.
 
@@ -218,6 +219,8 @@ Agent environment variables (set by the setup script / the unit):
 | `LUMINA_AGENT_BROADCAST` | Telemetry broadcast target (the hotspot subnet, e.g. `10.42.0.255`) |
 | `LUMINA_AGENT_ENROLL_STOP_RUNTIME` | `1` stops the runtime during image enrollment (frees RAM) |
 | `LUMINA_AGENT_TOKEN` | Overrides the token file (`$LUMINA_HOME/agent.token`) |
+| `LUMINA_AGENT_BIND_RETRIES` | Control-bind attempts before giving up (default `60`, ~60 s at 1 s apart) |
+| `LUMINA_AGENT_BIND_RETRY_MS` | Delay between control-bind attempts, ms (default `1000`) |
 
 ### Privacy / no network
 

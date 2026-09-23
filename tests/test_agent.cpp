@@ -9,14 +9,21 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <vector>
 
 #include "agent/amixer.hpp"
+#include "agent/bind_retry.hpp"
 #include "agent/enroll.hpp"
+#include "agent/face_names.hpp"
 #include "agent/json.hpp"
+#include "agent/runtime_state.hpp"
 #include "agent/telemetry.hpp"
+#include "vision/face_store.hpp"
 
 using namespace lumina::agent;
 
@@ -136,6 +143,119 @@ TEST_CASE("agent telemetry: datagram is valid-shaped JSON")
     CHECK(json.find("\"dayNight\":\"night\"") != std::string::npos);  // luma 0.10
     CHECK(json.find("\"people\":[\"David Solís\"]") != std::string::npos);
     CHECK(json.find("\"volume\":70") != std::string::npos);
+    CHECK(json.find("\"initializing\":false") != std::string::npos);  // default
+}
+
+TEST_CASE("agent telemetry: an unknown volume is the -1 sentinel, not null")
+{
+    TelemetryState state;
+    state.volume = -1;  // the mixer could not be read
+    const std::string json = buildTelemetryJson(state);
+    CHECK(json.find("\"volume\":-1") != std::string::npos);
+    CHECK(json.find("\"volume\":null") == std::string::npos);
+}
+
+TEST_CASE("agent telemetry: the initializing flag is serialized")
+{
+    TelemetryState state;
+    state.runtimeReachable = false;
+    state.running = false;
+    state.initializing = true;  // active but not yet reporting a fresh running status
+    const std::string json = buildTelemetryJson(state);
+    CHECK(json.find("\"running\":false") != std::string::npos);
+    CHECK(json.find("\"initializing\":true") != std::string::npos);
+}
+
+TEST_CASE("agent bind retry: bounded attempts")
+{
+    CHECK(shouldRetryControlBind(1, 3));
+    CHECK(shouldRetryControlBind(2, 3));
+    CHECK_FALSE(shouldRetryControlBind(3, 3));  // the last attempt is not retried
+    CHECK_FALSE(shouldRetryControlBind(1, 1));  // a single attempt disables retries
+    CHECK_FALSE(shouldRetryControlBind(1, 0));
+    CHECK_FALSE(shouldRetryControlBind(5, 1));
+}
+
+TEST_CASE("agent runtime readiness: probe scheduling and the initializing flag")
+{
+    using std::chrono::seconds;
+
+    // Unknown always probes; Active probes every 5 s; Inactive every 30 s (F1).
+    CHECK(runtimeProbeDue(RuntimeLiveness::Unknown, seconds{0}));
+    CHECK_FALSE(runtimeProbeDue(RuntimeLiveness::Active, seconds{4}));
+    CHECK(runtimeProbeDue(RuntimeLiveness::Active, seconds{5}));
+    CHECK_FALSE(runtimeProbeDue(RuntimeLiveness::Inactive, seconds{29}));
+    CHECK(runtimeProbeDue(RuntimeLiveness::Inactive, seconds{30}));
+    // Custom intervals are honored.
+    CHECK(runtimeProbeDue(RuntimeLiveness::Inactive, seconds{10},
+                          RuntimeProbeIntervals{seconds{5}, seconds{10}}));
+
+    const auto expect = [](RuntimeReadiness got, RuntimeLiveness wantLiveness,
+                           bool wantInitializing) {
+        CHECK(got.liveness == wantLiveness);
+        CHECK(got.initializing == wantInitializing);
+    };
+
+    // A fresh running status means the start finished: active, not initializing.
+    expect(evaluateRuntimeReadiness(RuntimeReadinessInput{RuntimeLiveness::Unknown, true, false, false}),
+           RuntimeLiveness::Active, false);
+    // Active + due probe + still active -> initializing.
+    expect(evaluateRuntimeReadiness(RuntimeReadinessInput{RuntimeLiveness::Active, false, true, true}),
+           RuntimeLiveness::Active, true);
+    // Active + due probe + now inactive -> stopped, not initializing.
+    expect(evaluateRuntimeReadiness(RuntimeReadinessInput{RuntimeLiveness::Active, false, true, false}),
+           RuntimeLiveness::Inactive, false);
+    // Inactive + due probe + active again -> an external start is detected (F1).
+    expect(evaluateRuntimeReadiness(
+               RuntimeReadinessInput{RuntimeLiveness::Inactive, false, true, true}),
+           RuntimeLiveness::Active, true);
+    // Inactive + no probe due -> stays inactive and quiet.
+    expect(evaluateRuntimeReadiness(
+               RuntimeReadinessInput{RuntimeLiveness::Inactive, false, false, false}),
+           RuntimeLiveness::Inactive, false);
+    // Active + no probe due -> keeps initializing without probing.
+    expect(evaluateRuntimeReadiness(RuntimeReadinessInput{RuntimeLiveness::Active, false, false, false}),
+           RuntimeLiveness::Active, true);
+}
+
+TEST_CASE("agent face names: read enrolled names from the face store")
+{
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "lumina_agent_face_names_test.bin";
+    std::filesystem::remove(path);
+
+    // Missing file -> no names (treated the same as an empty store).
+    CHECK(readEnrolledNames(path.string()).empty());
+
+    // Write a real store through the runtime's own FaceStore, then read it back.
+    lumina::vision::FaceStore store;
+    store.addEmbedding("Ana", std::vector<float>{1.0F, 0.0F, 0.0F, 0.0F});
+    store.addEmbedding("Luis Solís", std::vector<float>{0.0F, 1.0F, 0.0F, 0.0F});
+    // A second embedding for an existing person must not duplicate the name.
+    store.addEmbedding("Ana", std::vector<float>{0.9F, 0.1F, 0.0F, 0.0F});
+    REQUIRE(store.save(path.string()));
+
+    CHECK(readEnrolledNames(path.string()) == std::vector<std::string>{"Ana", "Luis Solís"});
+
+    // A truncated file is rejected wholesale, never partially read.
+    {
+        std::ifstream in(path, std::ios::binary);
+        const std::vector<char> bytes((std::istreambuf_iterator<char>(in)),
+                                      std::istreambuf_iterator<char>());
+        REQUIRE(bytes.size() > 4);
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size() / 2));
+    }
+    CHECK(readEnrolledNames(path.string()).empty());
+
+    // A file with the wrong magic is rejected.
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out << "NOTASTORE-and-then-some-padding-bytes";
+    }
+    CHECK(readEnrolledNames(path.string()).empty());
+
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("agent amixer: parse controls, volume and mute")

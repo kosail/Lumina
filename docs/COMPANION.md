@@ -70,8 +70,10 @@ not). Without it the status writer fails harmlessly (it logs once and the runtim
 |---|---|
 | Telemetry | read status file + `/sys/class/thermal/thermal_zone0/temp` + `/proc/meminfo` + `/proc/loadavg`; broadcast the JSON and unicast it to subscribers (UDP 47600) @1 Hz |
 | Subscriptions | listen on UDP 47600; a `{"t":"subscribe"}` datagram registers the sender for 10 s of unicast and gets an immediate `status` reply (bounded to 8 clients) |
+| Startup / bind | the control socket binds the hotspot gateway, which may not exist yet at boot (`EADDRNOTAVAIL`); the agent retries for a bounded window (`LUMINA_AGENT_BIND_RETRIES` × `LUMINA_AGENT_BIND_RETRY_MS`, default 60 × 1 s) instead of exiting, so no systemd restart / AP-first ordering is required (CHG-0094) |
 | Volume | `amixer -D bluealsa`: discover control name, `sget` to read, `sset '<ctrl>' <n>%` / `mute` / `unmute`; the reply carries `ok` |
-| People | names come from the runtime status file's one-per-line `person=` entries (the runtime knows the enrolled store), surfaced in the telemetry `people` array |
+| People | names are read from the persisted face store (`models/face/embeddings.bin`) via a small dependency-free reader, cached by mtime, surfaced in the telemetry `people` array and `people.list`. This keeps the list correct while the runtime is stopped; the runtime status file's `person=` lines are only a fallback |
+| Runtime readiness | `runtime.state`/telemetry expose an additive `initializing` flag: `lumina.service` is active but no fresh running status yet (models + BlueALSA sink wait). `systemctl is-active` is probed at a low rate — 5 s while starting, 30 s while known down, never while healthy — to avoid per-second process spawns; the slow down-probe also catches external starts (systemd `Restart=on-failure`, or the restart that follows a camera enrollment) within ~30 s |
 | Runtime control | `systemctl stop/start lumina` (narrow sudoers) |
 | Enrollment (camera) | stop runtime → `lumina_enroll --camera --frames <1..10>` as user `lumina` → **always** start runtime; stream `captured N/10` |
 | Enrollment (images) | decode + stage frames on disk (caps: 12 images / 8 MiB; control line up to 16 MiB for the base64 payload) → `lumina_enroll --image ...`; runtime keeps running unless `LUMINA_AGENT_ENROLL_STOP_RUNTIME=1` |

@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <netinet/in.h>
@@ -25,6 +26,7 @@
 #include "agent/command_runner.hpp"
 #include "agent/control.hpp"
 #include "agent/enroll.hpp"
+#include "agent/runtime_state.hpp"
 #include "agent/telemetry.hpp"
 #include "agent/udp.hpp"
 
@@ -55,6 +57,10 @@ struct AgentConfig {
     bool enrollImagesStopRuntime = false;            // stop the runtime to free RAM
     EnrollOrchestrator::Paths enroll;                // binary/model/store/piper paths
     int statusStaleSeconds = 5;                      // runtime considered down after this
+    // Control-bind retry (CHG-0094): at boot the hotspot gateway address may not exist yet, so the
+    // TCP bind can fail with EADDRNOTAVAIL. Retry for ~60 s before giving up.
+    int controlBindMaxAttempts = 60;
+    int controlBindRetryIntervalMs = 1000;
 };
 
 // The single long-lived agent object. Non-copyable; owns its sockets and threads.
@@ -105,6 +111,22 @@ private:
     // Read the runtime status file. Returns nullopt when absent/unparseable.
     [[nodiscard]] std::optional<RuntimeStatus> readRuntimeStatus();
 
+    // Enrolled names, read from the persisted face store (not the live status file)
+    // so the list survives the runtime being stopped. Cached by the store's
+    // mtime/size so the 1 Hz telemetry loop only re-reads when the file changes.
+    // Thread-safe (telemetry + control both call it).
+    [[nodiscard]] std::vector<std::string> enrolledNames();
+
+    // Whether the runtime is "initializing": `systemctl is-active` (cached, probed
+    // at a low rate) but not yet reporting a fresh running status. `ready` is the
+    // caller's readiness check (fresh status file + running). The decision lives in
+    // the pure runtime_state helper; this only supplies times and probe results.
+    [[nodiscard]] bool runtimeInitializing(bool ready);
+
+    // Record a known liveness (from a control request or an enrollment phase) and
+    // reset the probe clock so the next telemetry tick does not immediately re-probe.
+    void setRuntimeLiveness(RuntimeLiveness liveness);
+
     AgentConfig m_config;
     ICommandRunner& m_runner;
     SystemRuntimeControl m_runtime;
@@ -129,6 +151,25 @@ private:
     int m_enrollCaptured = 0;
     int m_enrollTotal = 0;
     std::atomic<bool> m_enrollCancel{false};
+
+    // Cached enrolled names (guarded by m_namesMutex). mtime/size/inode form the
+    // store's stat identity; a change triggers a re-read. The inode is included
+    // because enrollment rewrites via temp + rename, which changes the inode even
+    // when mtime (coarse resolution) and size coincide (F2).
+    std::mutex m_namesMutex;
+    std::vector<std::string> m_namesCache;
+    std::int64_t m_namesMtime = -1;
+    std::uintmax_t m_namesSize = 0;
+    std::uintmax_t m_namesInode = 0;
+    bool m_namesValid = false;
+
+    // Cached `systemctl is-active` liveness for the initializing flag. Guarded by
+    // m_runtimeStateMutex; m_runtimeStateGeneration lets a probe performed outside
+    // the lock detect that another thread changed the state meanwhile (F5).
+    std::mutex m_runtimeStateMutex;
+    RuntimeLiveness m_runtimeLiveness = RuntimeLiveness::Unknown;
+    std::chrono::steady_clock::time_point m_lastActiveProbe{};
+    std::uint64_t m_runtimeStateGeneration = 0;
 };
 
 }  // namespace lumina::agent

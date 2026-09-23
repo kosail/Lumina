@@ -184,8 +184,9 @@ std::string buildTelemetryJson(const TelemetryState& state)
     }
     peopleJson += "]";
 
-    // Volume as an integer, or null when unknown.
-    const std::string volumeJson = state.volume < 0 ? "null" : std::format("{}", state.volume);
+    // Volume as an integer; -1 is the "unknown" sentinel per contract §4.1 (never null — a null
+    // here made contract-following clients reject the whole frame; CHG-0093).
+    const std::string volumeJson = std::format("{}", state.volume);
     const std::string tempJson = state.tempC < 0.0 ? "null" : std::format("{:.1f}", state.tempC);
     const std::string loadJson = state.load1 < 0.0 ? "null" : std::format("{:.2f}", state.load1);
     const std::string memJson =
@@ -199,13 +200,14 @@ std::string buildTelemetryJson(const TelemetryState& state)
 
     return std::format(
         "{{\"t\":\"status\",\"proto\":1,\"ts\":{},"
-        "\"runtime\":{{\"reachable\":{},\"running\":{},\"uptimeS\":{},\"sink\":\"{}\",\"faceCount\":{}}},"
+        "\"runtime\":{{\"reachable\":{},\"running\":{},\"initializing\":{},\"uptimeS\":{},\"sink\":\"{}\",\"faceCount\":{}}},"
         "\"core\":{{\"fps\":{:.1f},\"rssMb\":{:.1f},\"memAvailableKb\":{},\"tempC\":{},\"load1\":{}}},"
         "\"sensors\":{{\"volume\":{},\"muted\":{},\"luma\":{:.3f},\"dayNight\":\"{}\"}},"
         "\"people\":{},"
         "\"enroll\":{{{}}}}}",
         state.ts, state.runtimeReachable ? "true" : "false", state.running ? "true" : "false",
-        state.uptimeS, escapeJson(state.sink), state.faceCount, state.fps, state.rssMb, memJson,
+        state.initializing ? "true" : "false", state.uptimeS, escapeJson(state.sink), state.faceCount,
+        state.fps, state.rssMb, memJson,
         tempJson, loadJson, volumeJson, state.muted ? "true" : "false", state.luma,
         deriveDayNight(state.luma), peopleJson, enroll);
 }
