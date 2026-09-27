@@ -1,168 +1,104 @@
 # Lúmina — Beta Runtime
 
-> **Archived — built for the Innovatec 2026 (InnovaTecNM) contest.**
-> Lúmina was created for the **Innovatec 2026 (InnovaTecNM)** student innovation contest. The
-> project did not advance beyond the **local stage**. This repository is **archived** (read-only) and
-> preserved as the final state; no further development is planned. Code, docs, and tests remain as a
+> **Archived. Built for the Innovatec 2026 (InnovaTecNM) contest.**
+> Lúmina was created for the **Innovatec 2026 (InnovaTecNM)** student innovation contest.
+> This repository is **archived** (read-only) and preserved as the final state;
+> no further development is planned. Code, docs, and tests remain as a
 > complete reference.
 
-Lúmina is an edge-AI assistive device for blind and low-vision users. A camera observes the
-environment; on-device AI interprets it; the result is spoken through bone-conduction audio.
-Everything runs locally — no cloud, no internet connection required.
+Lúmina is a modular processing unit that describes the world out loud. It is attached to any pair of glasses.
+A small camera watches the environment, on-device AI makes sense of it, and the result is spoken through bone-conduction
+audio, so someone who is blind or has low vision can *hear* what is in front of them. Everything
+runs on the device itself: no cloud, no account, no internet connection required.
 
-This repository is the **real runtime** for the **Raspberry Pi Zero 2 W**, written in **C++23**.
-It is a from-scratch build; the original Python proof-of-concept ("nightly") is a separate
-prototype and is **not** part of this codebase.
+This repository is the **runtime** that runs on the **Raspberry Pi Zero 2 W**, written from scratch
+in **C++23**. The earlier Python proof-of-concept we built (the "nightly") is a separate project and
+is **not** part of this codebase.
 
-> Status: **final / archived.** See [Final state](#final-state-what-shipped) and
-> [Known limitations](#known-limitations) below for exactly what shipped and what did not.
+![The prototype mounted on a pair of glasses](/.github/img/prototype.webp)
 
 ---
 
-## Current scope (beta)
+## What it does
 
-- Detect people, animals, and objects and narrate them in Spanish.
-- Prioritized obstacle alerts; safety alerts preempt spoken descriptions.
-- Face recognition for **3–4 enrolled people**, announced by name.
-- Fully on-device and Spanish-first (`es_MX`).
+- **Names what it sees, in Spanish** — people, animals and everyday objects, phrased naturally:
+  "una persona enfrente.", "una silla enfrente."
+- **Warns about obstacles ahead**, and lets a safety warning cut in mid-sentence when something is
+  close.
+- **Recognizes a few enrolled people** and greets them by name: "María está enfrente."
+- **Runs entirely on the device**, in Spanish (`es_MX`). Nothing ever leaves the glasses.
 
-**Out of scope for the beta:** currency recognition, offline navigation, indigenous-language
-support, cloud processing, desktop/GUI, and multi-device Bluetooth.
+All of the above was verified on a real device. A few numbers we measured: about **4.3 frames per
+second** of detection, a spoken alert starting **~250–300 ms** after detection (before the Bluetooth
+hop), and around **289 MB** of memory in use with face recognition running.
 
-## Final state (what shipped)
+**What it does not do:** currency recognition, offline navigation, indigenous-language voices,
+cloud processing, a desktop GUI, or more than one Bluetooth device at a time.
 
-Verified on-device at the end of the project (see `CHANGELOG.md` and `docs/PERFORMANCE.md`):
-
-- **Object/animal/person detection + Spanish narration** — YOLO11n (NCNN) at 320×256, ~4.3 FPS on
-  the Pi Zero 2 W; sentences such as "una persona enfrente." / "una silla enfrente."
-- **Prioritized obstacle alerts** — a camera Near-path Warning ("cuidado, obstáculo cerca.") plus a
-  class-agnostic front time-of-flight **Safety** alert at ≤0.8 m; a single arbiter orders the queue
-  and preempts speech.
-- **Face recognition** — YuNet + SFace (OpenCV) for a small set of enrolled people, greeted by name
-  ("<nombre> está enfrente") with a per-person cooldown.
-- **Front VL53L0X proximity** (I²C1) — the low-latency safety channel (FR-10); the rear sensor was
-  deferred.
-- **Bluetooth A2DP audio** to the single paired bone-conduction earbud, with a sink watchdog and
-  boot autostart (systemd).
-- **Companion ecosystem (FR-11)** — a separate `lumina_agent` owns the network: a 1 Hz UDP telemetry
-  broadcast, a token-gated TCP control channel (volume, people list, runtime start/stop, enrollment),
-  and the local `/run/lumina/status` handoff. The companion client is `kosail/Lumina-Companion`.
-- **On-disk TTS phrase cache** — pre-rendered Piper audio streamed from disk so fixed phrases play
-  with near-zero latency; the prewarm set is configurable.
-- **Camera-mount software rotation** (`LUMINA_CAMERA_ROTATION`) because the camera is physically
-  mounted rotated in the glasses.
-- **Environment-tunable configuration** for the demo-critical knobs (audio-sink behaviour, obstacle
-  thresholds, camera rotation, and more).
-
-Measured highlights: detection **4.1–4.3 FPS**; cached-alert `event→speech-start` **≈ 250–300 ms**
-(+Bluetooth); resident memory **≈ 289 MB** with face recognition. Details in `docs/PERFORMANCE.md`.
-
-## Known limitations
-
-- **Live (uncached) Piper synthesis cannot be preempted** — libpiper exposes no cancellation and can
-  return a whole utterance as a single chunk. Mitigated by prewarming the fixed vocabulary and
-  capping descriptions to 2 classes; a genuinely novel sentence may delay a safety alert. Tracked as
-  a later-stage item in `docs/PERFORMANCE.md`.
-- **Rear proximity sensor deferred**; only the front VL53L0X is present.
-- **Physical volume buttons deferred** indefinitely (`docs/DEFERRED.md`, entry D-001).
-- **Single Bluetooth audio device** — one A2DP earbud, no multi-device support.
-- **Face recognition** targets a small set (~3–4 enrolled people).
-- **The camera is physically mounted rotated**; corrected in software (`LUMINA_CAMERA_ROTATION=90`).
-- **Runtime-side UDP telemetry** (`LUMINA_ENABLE_TELEMETRY`) is off; the network lives in
-  `lumina_agent`.
-- **Not committed:** model weights, `third_party/` builds, and the cross sysroot — rebuild them from
-  the scripts and `docs/CROSS_COMPILE.md`.
-- **Modest throughput** (~4.3 FPS) by design for the Pi Zero 2 W (see INV-050/INV-051).
-
-## Contest and outcome
-
-Lúmina was built for the **Innovatec 2026 (InnovaTecNM)** contest. The team reached the **local
-stage** and the project **did not advance**. This repository is archived as the final state and as a
-reference; the companion client is archived separately in `kosail/Lumina-Companion`.
-
-## Target hardware
-
-| Component | Specification |
-|-----------|---------------|
-| Board | Raspberry Pi Zero 2 W Rev 1.0 — reported BCM2837, quad-core Arm Cortex-A53 @ 1 GHz, 512 MB LPDDR2 |
-| Camera | OV5647 5 MP, ~135° diagonal, auto IR-CUT (75/175), fixed manual focus (via libcamera) |
-| Audio | Bluetooth A2DP bone-conduction earbuds (single paired device) |
-| Proximity | 1× front VL53L0X time-of-flight (I²C1 `0x29`, XSHUT on GPIO17); second unit spare, rear deferred — see `docs/PROXIMITY.md` |
-| Enclosure | Solid aluminum case (thermal headroom is comfortable) |
-| OS | Raspberry Pi OS Lite 64-bit based on Debian 13 "trixie" (glibc, aarch64; kernel 6.18.x), headless |
-
-## Stack
-
-| Layer | Choice | Notes |
-|-------|--------|-------|
-| Language / build | C++23 (GCC 14.2.1), CMake >= 3.20 | Some C++23 library facilities may lag; verify before use |
-| Inference | [NCNN](https://github.com/Tencent/ncnn) + YOLO11n | Pure C++, best ARM CPU performance |
-| Capture | libcamera | OV5647 sensor |
-| Face | OpenCV `objdetect` (YuNet + SFace) | MobileFaceNet/NCNN is the low-RAM alternative |
-| TTS | [libpiper](https://github.com/OHF-Voice/piper1-gpl) + espeak-ng | Spanish (`es_MX`) voice, streamed PCM |
-| Audio out | ALSA -> `bluealsa` -> BlueZ | Single A2DP sink |
-| Proximity | VL53L0X over Linux `i2c-dev` | No third-party library; front zone alert |
-| Telemetry | UDP (optional, off by default) | Deferred; never touches the core path |
-
-## Architecture
+## How it works
 
 ```
-[libcamera capture] --latest frame--> [NCNN detector @320/416, 5-10 Hz]
-        |                                        |
-        |                                  [alert arbiter]      <-- priorities + preemption
-        +--> [face worker, on demand] ------>|
-                                             |
-                       [Piper TTS] -> [ALSA/bluealsa sink] -> Bluetooth earbuds
-[telemetry UDP]  (optional, disabled by default)
-[IProximitySensor] (1x front VL53L0X; short-range alert; see docs/PROXIMITY.md)
+[ camera ] --latest frame--> [ object detector ]
+     |                             |
+     |                       [ alert arbiter ]   <-- decides what to say first
+     +--> [ face recognition ] --->|
+                                   |
+                  [ speech (Piper) ] -> [ Bluetooth earbuds ]
+[ front distance sensor ]  (short-range safety alert)
 ```
 
-Design rules: interface-first with dependency injection, bounded queues that drop stale frames,
-and a single interruptible speech queue. See `AGENTS.md` and `INVARIANTS.md`.
+A few ideas hold the pipeline together. Hardware is reached only through small interfaces
+(`ICamera`, `ITtsEngine`, `IAudioSink`, `IProximitySensor`, …), so the logic can run on a laptop
+with fakes. Frames move through bounded queues that drop stale ones instead of piling up. And a
+single **alert arbiter** owns the speech queue, so a safety alert can always interrupt a
+description.
 
-## Repository layout
+## Hardware
+
+| Part | What we used |
+|------|--------------|
+| Board | Raspberry Pi Zero 2 W — quad-core Arm Cortex-A53 @ 1 GHz, 512 MB RAM |
+| Camera | OV5647 5 MP, ~135° field of view, auto IR-CUT |
+| Audio | Bluetooth A2DP bone-conduction earbuds (a single paired device) |
+| Distance sensor | One front VL53L0X time-of-flight sensor (I²C1) |
+| Case | Solid aluminum |
+| OS | Raspberry Pi OS Lite 64-bit (Debian 13 "trixie"), headless |
+
+## Built with
+
+| Layer | Choice |
+|-------|--------|
+| Language / build | C++23 (GCC 14), CMake |
+| Object detection | [NCNN](https://github.com/Tencent/ncnn) + YOLO11n |
+| Camera | libcamera |
+| Faces | OpenCV (YuNet + SFace) |
+| Speech | [libpiper](https://github.com/OHF-Voice/piper1-gpl) + espeak-ng, Spanish voice |
+| Audio out | ALSA → `bluealsa` → BlueZ |
+| Distance | VL53L0X over the Linux `i2c-dev` interface |
+
+## Project structure
 
 ```
 src/
-  core/         bounded queue, frame/event types, config, time, result, logging
-  capture/      libcamera camera source (ICamera)
-  vision/       NCNN object detector, face detection/recognition, enrollment store
-  processing/   distance heuristic
-  sensors/      IProximitySensor + NullProximitySensor + VL53L0X (front, I2C1)
-  alerts/       alert arbiter (priority, cooldown, preemption)
-  audio/        Piper TTS wrapper (ITtsEngine), BlueALSA audio sink (IAudioSink)
-  app/          pipeline orchestrator + Spanish describer
-  status/       local status snapshot hook (FR-11; runtime side, no network)
-  agent/        companion telemetry/control agent (FR-11; owns the network)
-  i18n/         Spanish message catalog
-  telemetry/    optional UDP telemetry (superseded by agent/; kept for history)
-models/         yolo11n_ncnn/, face/, voices/
-scripts/        1-sync_sysroot.sh, 2-build_ncnn.sh, 3-export_models.sh, 4-fetch_onnxruntime.sh, 5-build_libpiper.sh, 6-fetch_voices.sh, 7-setup_i2c.sh, 8-fetch_face_models.sh, enroll_face.sh, bt_setup.sh, 9-setup_autostart.sh, 10-setup_agent.sh (+ lumina.service, lumina-agent.service)
-tests/          unit tests (doctest) and on-device benchmarks
-cmake/          aarch64 toolchain and find-modules
+  core/         queues, frame types, config, time, logging
+  capture/      the libcamera camera source
+  vision/       object detector, face recognition, enrollment store
+  processing/   the distance heuristic
+  sensors/      the front proximity sensor
+  alerts/       the alert arbiter (priority, cooldown, preemption)
+  audio/        speech (Piper) and the BlueALSA audio sink
+  app/          the pipeline and the Spanish describer
+  status/       the local status snapshot the companion agent reads
+  agent/        lumina_agent — telemetry + control for the companion app
+  i18n/         the Spanish message catalog
+scripts/        setup and build helpers (sysroot, NCNN, models, voices, services)
+tests/          unit tests and on-device benchmarks
+cmake/          the aarch64 cross toolchain
 ```
 
-## Documentation map
+## Getting started
 
-| File | Role |
-|------|------|
-| [`INVARIANTS.md`](INVARIANTS.md) | Highest source of truth — non-negotiable facts and decisions |
-| [`SPECS.md`](SPECS.md) | Structured business requirements |
-| [`RAW_PLAN.md`](RAW_PLAN.md) | Execution schedule and stack rationale |
-| [`AGENTS.md`](AGENTS.md) | Operating manual: style, workflow, documentation rules |
-| [`CHANGELOG.md`](CHANGELOG.md) | Append-only, machine-readable change log |
-| [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Measured detection performance, resolution decision, fallback plan |
-| [`docs/COMPANION.md`](docs/COMPANION.md) | Companion app ecosystem: architecture, agent, probe results |
-| [`docs/PI_RUNBOOK.md`](docs/PI_RUNBOOK.md) | Bring up a real device end to end: build, deploy, hotspot, runtime + agent services, verify, connect the app |
-| [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | **Authoritative** companion wire contract (schemas, commands, Kotlin notes) for FR-11 |
-| [`docs/APP_PROTOCOL.md`](docs/APP_PROTOCOL.md) | Short pointer/summary of the companion protocol (superseded) |
-| [`docs/DEFERRED.md`](docs/DEFERRED.md) | Deferred work registry — intentionally postponed features; do not implement without user confirmation |
-
-Source-of-truth order: `INVARIANTS.md` > `SPECS.md` > `RAW_PLAN.md` > `AGENTS.md` > code.
-
-## Build
-
-### Host build (fast feedback, no hardware required)
+### Build on your laptop (no hardware needed)
 
 ```bash
 cmake --preset host
@@ -170,184 +106,167 @@ cmake --build --preset host
 ctest --preset host
 ```
 
-### Cross build for the Raspberry Pi
+### Cross-build for the Raspberry Pi
 
-First time only, build the target sysroot from the Pi (needs `rsync` + `ssh`; ~1.4 GB, gitignored):
+Build on a laptop, not on the Pi, as a 512 MB board is slow and can run out of memory. You need a
+GCC 14 aarch64 cross toolchain. First pull the target sysroot from the Pi (one time, ~1.4 GB, kept
+out of git):
 
 ```bash
 scripts/1-sync_sysroot.sh --host pi@<pi-host>   # -> cmake/rpi-sysroot/
+cmake --preset aarch64                          # configure with the cross toolchain
+cmake --build --preset aarch64                  # -> build/aarch64/lumina
 ```
 
-Then, on the laptop:
+The full walkthrough — sysroot, symlinks, verification, deployment, troubleshooting, and the Arch
+`--sysroot` gotcha — is in [`docs/CROSS_COMPILE.md`](docs/CROSS_COMPILE.md).
+
+### Models and voice
+
+Model files are not committed. Fetch and export them with:
 
 ```bash
-cmake --preset aarch64          # configure with cmake/toolchain-aarch64.cmake
-cmake --build --preset aarch64  # produces build/aarch64/lumina
+scripts/3-export_models.sh      # YOLO11n -> NCNN, at the sizes we benchmarked
+scripts/4-fetch_onnxruntime.sh  # the aarch64 ONNX Runtime that Piper needs
+scripts/6-fetch_voices.sh       # the Spanish (es_MX) Piper voice
+scripts/8-fetch_face_models.sh  # the YuNet + SFace face models
 ```
 
-Requires a GCC 14 aarch64 cross toolchain. Build on the laptop, not on the device: native builds on
-a 512 MB board are slow and can run out of memory. Full walkthrough (extraction, placement,
-symlinks, verification, deployment, troubleshooting, and the Arch `--sysroot` gotcha):
-[`docs/CROSS_COMPILE.md`](docs/CROSS_COMPILE.md).
-
-### Models
-
-Model files are not committed. Export/download them with:
-
-```bash
-scripts/3-export_models.sh      # YOLO11n -> NCNN (320x256 + comparison sizes)
-scripts/4-fetch_onnxruntime.sh  # official prebuilt ONNX Runtime (aarch64) for libpiper
-scripts/6-fetch_voices.sh       # pinned es_MX Piper voice (Spanish TTS)
-scripts/8-fetch_face_models.sh  # YuNet + SFace face models (OpenCV, SHA-256 pinned)
-```
-
-## Configuration
-
-Compile-time options (defaults shown):
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `LUMINA_FACE_EMBEDDER` | `sface` | Face embedding model (`sface` or `mobilefacenet`) |
-| `LUMINA_INFER_PRECISION` | `fp16` | Inference precision (`fp16` or `int8`, benchmark-gated) |
-| `LUMINA_INFER_WIDTH` / `LUMINA_INFER_HEIGHT` | `320` / `256` | Detector input size (see `docs/PERFORMANCE.md`) |
-| `LUMINA_ENABLE_LIBCAMERA` | `OFF` | Build the libcamera capture path |
-| `LUMINA_ENABLE_NCNN` | `OFF` | Build the NCNN detector path |
-| `LUMINA_ENABLE_AUDIO` | `OFF` | Build the Piper TTS + ALSA/bluealsa path |
-| `LUMINA_ENABLE_FACE` | `OFF` | Build the OpenCV face recognition path (YuNet + SFace) |
-| `LUMINA_ENABLE_PROXIMITY` | `OFF` | Build the VL53L0X proximity path (`ON` in the aarch64 preset) |
-| `LUMINA_ENABLE_TELEMETRY` | `OFF` | Build the optional UDP telemetry path (superseded by `LUMINA_BUILD_AGENT`) |
-| `LUMINA_ENABLE_STATUS` | `ON` | Runtime writes the local status snapshot `/run/lumina/status` (~1 Hz; no network) |
-| `LUMINA_BUILD_AGENT` | `ON` | Build `lumina_agent` (companion telemetry + control; FR-11) |
-
-## Run
+## Running Lúmina
 
 ```bash
 ./build/aarch64/lumina
 ```
 
-Audio is routed to the paired bone-conduction earbuds automatically at startup. The runtime waits
-up to 3 minutes for the BlueALSA sink before giving up (FR-06.1): if it never appears it powers the
-device off, or just stops the runtime when power-off is not permitted. Verified on-device
-(CHG-0081) with the earbuds both connected and disconnected. See `docs/BLUETOOTH.md`.
+Audio is routed to the paired earbuds automatically. At startup the runtime looks for the earbuds
+and waits for them (up to a few minutes): if they never appear it powers the device off, so the
+device never sits there pretending to work, and when power-off isn't permitted, it simply stops.
+This was tested with the earbuds both connected and disconnected. See
+[`docs/BLUETOOTH.md`](docs/BLUETOOTH.md).
 
-### Autostart at boot
-
-Install and enable the systemd service (also adds the narrow power-off sudoers rule):
+### Start automatically at boot
 
 ```bash
-scripts/bt_setup.sh              # pair/trust the single earbud (system layer)
-scripts/9-setup_autostart.sh     # install + enable lumina.service
+scripts/bt_setup.sh              # pair and trust the single earbud
+scripts/9-setup_autostart.sh     # install and enable lumina.service
 ```
 
-First cold boot with the service enabled: ready in **~60 s**. Roughly 18 s is boot-to-start, ~21 s is
-model load (Piper dominates), and — if the earbuds are not connected yet — up to ~21 s more is the
-watchdog waiting for the BlueALSA sink. Power the earbuds on before (or at) the Pi to avoid that wait
-(~40 s total). Measured 2026-09-20; see `docs/PERFORMANCE.md` §14.
+A cold boot with the service enabled is ready in about a minute. Most of that is loading the speech
+model (~21 s); if the earbuds aren't connected yet you can add ~21 s of waiting, so it's worth
+turning them on before (or at) the Pi.
 
-Runtime environment variables (all optional):
+## Configuration
+
+Everything below is optional. The defaults are what the code uses when nothing is set; the systemd
+units override a couple of them for the demo.
+
+### Build flags
+
+Passed to CMake at configure time, for example `cmake --preset aarch64 -DLUMINA_ENABLE_FACE=ON`.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `LUMINA_ENABLE_LIBCAMERA` | `OFF` | Build the camera capture path (libcamera). |
+| `LUMINA_ENABLE_NCNN` | `OFF` | Build the object detector (NCNN + YOLO11n). |
+| `LUMINA_ENABLE_AUDIO` | `OFF` | Build speech (Piper + espeak-ng) and the ALSA/bluealsa output. |
+| `LUMINA_ENABLE_FACE` | `OFF` | Build face recognition (OpenCV YuNet + SFace). |
+| `LUMINA_ENABLE_PROXIMITY` | `OFF` | Build the front VL53L0X distance sensor. |
+| `LUMINA_ENABLE_STATUS` | `ON` | Write the local status snapshot (`/run/lumina/status`). |
+| `LUMINA_BUILD_AGENT` | `ON` | Build the companion agent (`lumina_agent`). |
+| `LUMINA_ENABLE_TELEMETRY` | `OFF` | Build the older runtime-side UDP telemetry (superseded by the agent). |
+| `LUMINA_BUILD_TESTS` | `ON` | Build the host unit tests. The `aarch64` preset sets it `OFF`. |
+| `LUMINA_BUILD_BENCH` | `OFF` | Build the on-device benchmark targets. |
+| `LUMINA_FACE_EMBEDDER` | `sface` | Face model to use: `sface` or `mobilefacenet`. |
+| `LUMINA_INFER_PRECISION` | `fp16` | Inference precision: `fp16` or `int8`. |
+| `LUMINA_INFER_WIDTH` / `LUMINA_INFER_HEIGHT` | `320` / `256` | Object-detector input size, in pixels. |
+| `LUMINA_NCNN_ROOT` | `third_party/ncnn` | Where the prebuilt NCNN install lives (advanced). |
+| `LUMINA_LIBPIPER_ROOT` | `third_party/libpiper` | Where the prebuilt libpiper install lives (advanced). |
+
+> The full runtime needs **`LUMINA_ENABLE_LIBCAMERA`**, **`LUMINA_ENABLE_NCNN`** and
+> **`LUMINA_ENABLE_AUDIO`** together . Without them, `lumina` builds a stub that just prints a notice.
+
+### Runtime environment variables
+
+Read when `lumina` starts. Unset variables keep their defaults, and a value that can't be parsed is
+ignored (the runtime logs a warning and keeps the default).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LUMINA_LOG_LEVEL` | `info` | Log verbosity: `trace`, `debug`, `info`, `warn`, `error` or `off`. |
+| `PIPER_NUM_THREADS` | `3` (set by the service) | Threads for speech synthesis / ONNX Runtime. |
+| `LUMINA_PHRASE_CACHE_DIR` | `$HOME/.cache/lumina/phrase-cache` | Where the pre-rendered speech cache lives. |
+| `LUMINA_STATUS_PATH` | `/run/lumina/status` | Where the runtime writes its status snapshot. |
+| `LUMINA_WARM_ONLY` | *(off)* | `1` loads the models, renders any missing phrases, then exits. A quick pre-show cache check. |
+| `LUMINA_CAMERA_ROTATION` | `90` | Rotate frames upright: `0`, `90`, `180` or `270` degrees. |
+| `LUMINA_PROXIMITY_ENABLED` | `true` | `0`/`false` disables the distance sensor. |
+| `LUMINA_AUDIO_SHUTDOWN_ON_FAILURE` | `true` | Power off when the earbuds never appear; `0` just stops the runtime. |
+| `LUMINA_AUDIO_SINK_MAX_RETRIES` | `60` | How many times to look for the audio sink (the demo unit sets `10000`). |
+| `LUMINA_AUDIO_SINK_RETRY_MS` | `3000` | Delay between those attempts, in ms. |
+| `LUMINA_PROXIMITY_THRESHOLD_M` | `0.8` | Distance (m) at or below which the safety alert fires. |
+| `LUMINA_PROXIMITY_RELEASE_M` | `1.2` | Distance (m) at which the alert clears (hysteresis). |
+| `LUMINA_NEAR_AREA_FRACTION` | `0.20` | Box-size fraction that makes a centered object an imminent obstacle. |
+| `LUMINA_MID_AREA_FRACTION` | `0.06` | Mid-distance band; kept for tuning, no longer raises alerts on its own. |
+| `LUMINA_PATH_CENTER_TOLERANCE` | `0.25` | How centered an object must be to count as "in the path". |
+| `LUMINA_OBSTACLE_CLASSES` | `1,2,5,56,57,60` | COCO class ids treated as obstacles; people (`0`) are always narrated. |
+| `ORT_DISABLE_TELEMETRY` | set in-process | Silences ONNX Runtime telemetry; the runtime already sets it itself. |
+
+The `lumina_agent` variables (network addresses, ports and token) are listed in
+[The companion app](#the-companion-app).
+
+## The companion app
+
+Lúmina has a phone and desktop app that talks to it over the device's own Wi-Fi hotspot. The
+runtime stays off the network: a separate, small program, **`lumina_agent`**, owns every socket. It
+reports status once a second, controls volume, lists and enrolls people, and starts or stops the
+runtime. The app lives in
+[`kosail/Lumina-Companion`](https://github.com/kosail/Lumina-Companion).
+
+```bash
+# On the Pi, after deploying lumina and lumina_agent to $LUMINA_HOME:
+scripts/10-setup_agent.sh --start
+```
+
+The agent's settings are normally set by the setup script:
 
 | Variable | Meaning |
 |----------|---------|
-| `LUMINA_LOG_LEVEL` | `trace`/`debug`/`info`/`warn`/`error`/`off` (default `info`) |
-| `PIPER_NUM_THREADS` | Piper/ONNX Runtime intra-op threads (default 3) |
-| `LUMINA_PHRASE_CACHE_DIR` | On-disk TTS phrase cache directory (default `$HOME/.cache/lumina/phrase-cache`) |
-| `LUMINA_WARM_ONLY` | `1`/`true` loads the models, renders any missing phrases, logs the cache size, and exits before the sink wait/pipeline — exit `0` = cache ready, `1` = cache dir unusable (pre-show cache check; CHG-0098/CHG-0099) |
-| `LUMINA_AUDIO_SHUTDOWN_ON_FAILURE` | `1` (default) powers the device off when the audio sink never appears (FR-06.1); `0` stops the runtime instead. The unit sets `0` for demos |
-| `LUMINA_AUDIO_SINK_MAX_RETRIES` | Audio-sink `open()` attempts before giving up (default `60`; the unit sets `10000` ≈ 8.3 h for demos) |
-| `LUMINA_AUDIO_SINK_RETRY_MS` | Pause between audio-sink `open()` attempts, ms (default `3000`) |
-| `LUMINA_PROXIMITY_ENABLED` | `0`/`false` disables the proximity sensor (default `true`) |
-| `LUMINA_NEAR_AREA_FRACTION` | Box area / frame area at/above which a centered camera obstacle raises the generic Warning (default `0.20`) |
-| `LUMINA_MID_AREA_FRACTION` | Mid distance band (default `0.06`); **no longer drives alerts** — Mid obstacle-class objects are narrated, not warned |
-| `LUMINA_PATH_CENTER_TOLERANCE` | Horizontal half-band counted as "in path", as a fraction of frame width (default `0.25`) |
-| `LUMINA_PROXIMITY_THRESHOLD_M` | IR distance at/below which the class-agnostic Safety alert fires (default `0.8`) |
-| `LUMINA_PROXIMITY_RELEASE_M` | IR hysteresis release distance (default `1.2`) |
-| `LUMINA_OBSTACLE_CLASSES` | CSV of COCO ids treated as camera obstacles (default `1,2,5,56,57,60`; person `0` excluded so people are narrated) |
-| `LUMINA_CAMERA_ROTATION` | Clockwise rotation applied to every captured frame to make it upright, in degrees: `0`/`90`/`180`/`270` (default `90`; the camera is mounted rotated in the glasses) |
-| `ORT_DISABLE_TELEMETRY` | Set to `1` to silence ONNX Runtime telemetry. **Privacy: the runtime sets this in-process before ONNX Runtime initializes (CHG-0080); you do not need to export it, and Lúmina never phones home (INV-003/INV-034).** |
-
-### Companion app (FR-11)
-
-The runtime reports its status to an Android/desktop companion app over the Pi's own Wi-Fi hotspot.
-The runtime stays **network-free**: it only writes `/run/lumina/status` at ~1 Hz. A separate,
-opt-in **`lumina_agent`** process owns every socket — a 1 Hz UDP status broadcast (`:47600`) and a
-token-gated TCP control channel (`:47601`) for volume/mute, the enrolled-people list, runtime
-start/stop, and enrollment (Pi camera or phone photos). Wire contract: `docs/API_CONTRACT.md`;
-architecture and operations: `docs/COMPANION.md`.
-
-```bash
-# On the Pi (after deploying `lumina` and `lumina_agent` to $LUMINA_HOME):
-scripts/10-setup_agent.sh --start   # /run/lumina + token + sudoers + lumina-agent.service
-```
-
-Agent environment variables (set by the setup script / the unit):
-
-| Variable | Meaning |
-|----------|---------|
-| `LUMINA_HOME` | Directory holding `lumina`, `lumina_agent`, `models/`, `third_party/` |
-| `LUMINA_AGENT_BIND_ADDR` | Local address for TCP control (the hotspot gateway, e.g. `10.42.0.1`) |
-| `LUMINA_AGENT_BROADCAST` | Telemetry broadcast target (the hotspot subnet, e.g. `10.42.0.255`) |
-| `LUMINA_AGENT_ENROLL_STOP_RUNTIME` | `1` stops the runtime during image enrollment (frees RAM) |
+| `LUMINA_HOME` | Folder holding `lumina`, `lumina_agent`, `models/`, `third_party/` |
+| `LUMINA_AGENT_BIND_ADDR` | Address the control channel listens on (the hotspot gateway, e.g. `10.42.0.1`) |
+| `LUMINA_AGENT_BROADCAST` | Where telemetry is broadcast (the hotspot subnet, e.g. `10.42.0.255`) |
+| `LUMINA_AGENT_ENROLL_STOP_RUNTIME` | `1` stops the runtime during photo enrollment to free memory |
 | `LUMINA_AGENT_TOKEN` | Overrides the token file (`$LUMINA_HOME/agent.token`) |
-| `LUMINA_AGENT_BIND_RETRIES` | Control-bind attempts before giving up (default `60`, ~60 s at 1 s apart) |
-| `LUMINA_AGENT_BIND_RETRY_MS` | Delay between control-bind attempts, ms (default `1000`) |
+| `LUMINA_AGENT_BIND_RETRIES` / `LUMINA_AGENT_BIND_RETRY_MS` | How long to keep retrying the control bind while the hotspot comes up |
 
-### Privacy / no network
+## Privacy
 
-Lúmina performs **no cloud/network calls** (INV-003, INV-034). The one thing that would have
-violated this is the official ONNX Runtime prebuilt behind libpiper, which ships telemetry that
-POSTs to `mobile.events.data.microsoft.com/OneCollector/1.0/`. The runtime disables it by setting
-`ORT_DISABLE_TELEMETRY=1` before ONNX Runtime initializes (`src/audio/piper_tts.cpp`), and
-`lumina.service` also sets it explicitly. Verify with a packet/socket watch:
+Lúmina makes **no network or cloud calls**. The one thing that would have broken that is the
+prebuilt ONNX Runtime inside Piper, which phones home by default (telemetry to Microsoft Azure servers); the runtime disables it before it
+starts, and can be checked with a socket watch:
 
 ```bash
 strace -f -e trace=connect ./lumina models/yolo11n_ncnn_320x256 \
-  models/voices/es_MX-claude-high.onnx espeak-ng-data   # expect no AF_INET connects
+  models/voices/es_MX-claude-high.onnx espeak-ng-data   # expect no internet connections
 ```
 
-**Verified on-device (CHG-0081):** with only the in-process `setenv` (no launcher export),
-`strace -e trace=connect` showed **no AF_INET connects**, so the code-level disable is sufficient.
-The `lumina.service` `Environment=` line is kept as belt-and-braces.
+## Performance and memory
 
-### Memory on the Pi Zero 2 W
+The Pi Zero 2 W is tight on memory — about 447 MB usable with `gpu_mem=32`, and the full runtime
+with face recognition sits around **289 MB**. A few things help:
 
-The board is memory-bound: with `gpu_mem=32` it has only ~447 MB usable RAM, and the runtime with
-face recognition settles around ~289 MB RSS. Face detection is downscaled to `faceDetectionSide`
-(default 320) and face inference backs off while a person is on greeting cooldown; see
-`docs/PERFORMANCE.md` §12.
-
-Recommended system tuning:
-- Set `gpu_mem=32` in `/boot/firmware/config.txt` (frees RAM for the CPU side).
-- Use **zram** instead of SD swap (`zram-tools`, `PERCENTAGE=50`); confirm `swapon --show` lists only
-  `/dev/zram0`.
+- Set `gpu_mem=32` in `/boot/firmware/config.txt`.
+- Use **zram** instead of SD swap (`zram-tools`, `PERCENTAGE=50`).
 - Add `/etc/sysctl.d/99-lumina.conf` with `vm.swappiness=10`, `vm.page-cluster=0`,
   `vm.watermark_boost_factor=0`, then `sudo sysctl --system`.
-- Disable unneeded services (`avahi-daemon`, `cups`, `triggerhappy`, `ModemManager`); keep
+- Disable services you don't need (`avahi-daemon`, `cups`, `triggerhappy`, `ModemManager`), but keep
   `bluetooth` for the earbuds.
 
-## Testing and benchmarks
+Measured numbers and the design trade-offs behind them live in
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-- Unit tests (host, mocks only): `ctest --preset host`
-- On-device performance: `tests/bench_fps`, `tests/bench_latency`
-- Record FPS, latency, and resident memory in `CHANGELOG.md`.
+## Enrolling people
 
-## What shipped / what was deferred
-
-**Shipped** (verified on-device): the runtime skeleton + libcamera capture + NCNN detector +
-Piper→Bluetooth vertical slice; the alert arbiter and Spanish catalog; face enrollment and
-recognition (photos CHG-0073, live camera CHG-0083); Bluetooth autoconnect + boot autostart +
-sink watchdog (CHG-0077/0079); the front VL53L0X proximity alert (FR-10, CHG-0074); the companion
-agent + app ecosystem (FR-11); the on-disk phrase cache; camera-mount software rotation (CHG-0101);
-and the demo-hardening environment tuning (CHG-0098..0103).
-
-**Deferred / out of scope:** rear proximity sensor (`docs/PROXIMITY.md`); physical volume buttons
-(`docs/DEFERRED.md` D-001); currency recognition; OCR/text reading; offline navigation;
-indigenous-language support; cloud processing; multi-device Bluetooth; INT8 quantization and the
-dual-voice fallback.
-
-## Face enrollment (FR-04)
-
-Build with the face path and enroll each person on the Pi (one named person per run).
-Enrollment accepts **photos** (recommended) or the **live camera**:
+Enroll each person on the Pi, one named person per run, from photos (recommended) or the live
+camera:
 
 ```bash
 # Cross-build with the face path (add LIBCAMERA only if you want --camera)
@@ -355,41 +274,98 @@ cmake --preset aarch64 -DLUMINA_ENABLE_FACE=ON -DLUMINA_ENABLE_NCNN=ON \
       -DLUMINA_ENABLE_AUDIO=ON -DLUMINA_ENABLE_LIBCAMERA=ON
 cmake --build --preset aarch64
 
-# On the Pi, from the deploy dir (~/lumina), one run per person:
-scripts/enroll_face.sh "María" photos/Maria        # all photos in a folder
-scripts/enroll_face.sh "Juan"  juan1.jpg juan2.jpg # explicit photo files
-scripts/enroll_face.sh "Ana"   --camera            # live camera capture
+# On the Pi, from the deploy dir (~/lumina):
+scripts/enroll_face.sh "María" photos/Maria         # every photo in a folder
+scripts/enroll_face.sh "Juan"  juan1.jpg juan2.jpg  # explicit photo files
+scripts/enroll_face.sh "Ana"   --camera             # live camera capture
 ```
 
-Enrollment writes `models/face/embeddings.bin` (up to 10 embeddings per person) and
-reloads automatically on the next boot. Embeddings and photos stay on the device
-(FR-03.4). For best results give each person **3–5 varied, front-facing, well-lit
-photos**. The runtime greets a recognized person with "<nombre> está enfrente".
+Enrollment writes `models/face/embeddings.bin` (up to 10 embeddings per person) and reloads on the
+next boot. Embeddings and photos stay on the device. For best results, give each person **3–5
+varied, front-facing, well-lit photos**. The runtime then greets a recognized person with
+"<nombre> está enfrente". The live-camera path needs the runtime stopped first (it holds the
+camera); full details are in [`docs/FACE.md`](docs/FACE.md).
 
-The **live `--camera` path was verified on-device (2026-09-21, CHG-0083)**: stop the runtime first
-(it holds the camera), enroll, then restart so the greeting is pre-warmed. Full runbook,
-verification steps and troubleshooting: **`docs/FACE.md`**.
+## Known limitations
 
-## License and third-party notices
+- **A brand-new, uncached sentence can't be interrupted.** The speech engine has no cancellation and
+  can return a whole utterance at once, so a sentence we didn't pre-render may briefly delay a
+  safety alert. We mitigate it by pre-rendering the fixed vocabulary and keeping descriptions short.
+- **Only the front distance sensor** is present; the rear one was deferred.
+- **No physical volume buttons** (deferred on purpose).
+- **One Bluetooth audio device** at a time.
+- **Face recognition** targets a small set of people (~3–4).
+- **The camera is physically mounted rotated**; the software rotates the frames back upright.
+- **The device is modest** — about 4.3 FPS of detection, by design for this board.
+- **Models, the cross sysroot, and `third_party/` builds are not committed** — the scripts and
+  [`docs/CROSS_COMPILE.md`](docs/CROSS_COMPILE.md) rebuild them.
 
-The **Lúmina projects are licensed under the GNU General Public License version 3 (GPLv3)** — see
-[`LICENSE`](LICENSE). Copyleft (C) 2026 Lúmina team.
+## The contest
+
+Lúmina was built for the **Innovatec 2026 (InnovaTecNM)** contest. We reached to the **regional
+stage**, but sadly we were not chosen and the project **did not advance**. This repository is archived as the final state and as a
+reference; the companion client is archived separately in [Lumina Companion](https://github.com/kosail/Lumina-Companion).
+
+Likely, I will never work on this repository again.
+
+## Documentation
+
+If you want the deeper detail, these are the places to look:
+
+- [`docs/PI_RUNBOOK.md`](docs/PI_RUNBOOK.md) — bring up a real device from scratch.
+- [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — measured numbers and the reasoning behind them.
+- [`docs/COMPANION.md`](docs/COMPANION.md) and [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) — the
+  companion app and the protocol it speaks.
+- [`docs/CROSS_COMPILE.md`](docs/CROSS_COMPILE.md) — the cross-build walkthrough.
+- [`docs/FACE.md`](docs/FACE.md) — enrollment details.
+- [`docs/PROXIMITY.md`](docs/PROXIMITY.md) and [`docs/BLUETOOTH.md`](docs/BLUETOOTH.md) — sensors
+  and audio.
+- [`docs/DEFERRED.md`](docs/DEFERRED.md) — what we deliberately chose not to build.
+- [`INVARIANTS.md`](INVARIANTS.md), [`SPECS.md`](SPECS.md), [`RAW_PLAN.md`](RAW_PLAN.md) and
+  [`AGENTS.md`](AGENTS.md) — the engineering notes and rules we worked under.
+
+## Contributing
+
+This project is **archived and no longer maintained**, so pull requests are unlikely to be
+reviewed. Even so, if you're here to learn from it or to reuse parts of it, this is how we worked
+on it:
+
+1. **Read the docs first.** Start with [`docs/PI_RUNBOOK.md`](docs/PI_RUNBOOK.md) to bring up a
+   device, and [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for the measured numbers and the
+   trade-offs behind the design.
+2. **Build and test locally before anything else.** The host build needs no hardware:
+
+   ```bash
+   cmake --preset host && cmake --build --preset host && ctest --preset host
+   ```
+
+3. **Keep the architecture.** Hardware is reached only through interfaces (`ICamera`, `ITtsEngine`,
+   `IAudioSink`, `IProximitySensor`, …) that are injected at startup, so everything stays testable
+   with fakes.
+4. **Comment the *why*, not the *what*.** This codebase is written to be readable by someone coming
+   back to C++ after a long time.
+5. **No cloud, no network in the core path.** Lúmina is meant to work fully offline.
+6. **If you fork it, keep it GPLv3.**
+
+## License
+
+The **Lúmina projects are licensed under the GNU General Public License version 3 (GPLv3)**. See
+[`LICENSE`](LICENSE).
 
 Lúmina itself is GPLv3; **third-party components keep their own licenses** and are used under their
 own terms:
 
-- **Piper / `piper1-gpl`** and **espeak-ng** — GPL-3.0 (now consistent with Lúmina's own GPLv3).
+- **Piper / `piper1-gpl`** and **espeak-ng** — GPL-3.0 (consistent with Lúmina's own GPLv3).
 - **NCNN** — BSD-3-Clause.
 - **OpenCV** — Apache-2.0; the **YuNet** (MIT) and **SFace** (Apache-2.0) face models.
 - **YOLO11n** weights — Ultralytics license (not committed; verify before redistribution).
-- The companion app's dependencies keep their own licenses (see `kosail/Lumina-Companion`).
+- The companion app's dependencies keep their own licenses (see `https://github.com/kosail/Lumina-Companion`).
 
-## Contributing
+---
 
-Before contributing, read `AGENTS.md` and `INVARIANTS.md`.
+## Copyleft notice
 
-- **Never assume.** Consult the latest official documentation before using an API or hardware
-  behavior. If a lookup fails, or confidence is below 0.80, ask. (INV-001)
-- **Never silently change an invariant.** Ask first; log the outcome.
-- Keep changes modular, decoupled, testable, and **fully commented**.
-- Append an entry to `CHANGELOG.md` for every meaningful change.
+© 2026 kosail, from the Lúmina Team. Lúmina is free software, licensed under the **GNU GPL v3.0 (copyleft)** — see
+[`LICENSE`](LICENSE). Third-party components keep their own licenses.
+
+With love, from Honduras. Mi país cinco estrellas.

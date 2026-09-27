@@ -3867,4 +3867,62 @@
   approvals: [user]
   follow_up: >-
     None. The license is permanent GPLv3; INV-060 is retired (IDs are never reused).
+
+# ---------------------------------------------------------------------------
+# CHG-0106 — Human-friendly README rewrite
+# ---------------------------------------------------------------------------
+- id: CHG-0106
+  date: 2026-09-26
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-070]
+  supersedes: null
+  summary: >-
+    Rewrote README.md so it reads as a human project page rather than an agent manual. Removed the
+    internal machine citations (INV-/CHG-/FR-) and the "source-of-truth order" framing from the body,
+    merged the scope and final-state sections into a plain "What it does", retitled the docs section,
+    wrote a real Contributing section, and added a closing copyleft notice from kosail with the
+    sign-off "With love, from Honduras. Mi País cinco estrellas." All technical content (hardware,
+    stack, build, config, companion, privacy, performance, enrollment, limitations) is preserved, as
+    are the personal contest notes.
+  rationale: >-
+    A README is for people, not agents. The previous text was saturated with invariant and changelog
+    references that only make sense inside our internal workflow; an archived project should be
+    approachable to any human who wants to understand or reuse it.
+  files:
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None.
+
+# ---------------------------------------------------------------------------
+# CHG-0107 — README: Configuration reference (build flags + env vars)
+# ---------------------------------------------------------------------------
+- id: CHG-0107
+  date: 2026-09-26
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-070]
+  supersedes: null
+  summary: >-
+    Promoted the settings tables to a top-level "Configuration" section in README.md with two charts
+    that both carry a Default column: build flags (all CMake options and cache strings, including the
+    ones previously omitted: LUMINA_ENABLE_TELEMETRY, LUMINA_BUILD_TESTS, LUMINA_BUILD_BENCH,
+    LUMINA_NCNN_ROOT, LUMINA_LIBPIPER_ROOT) and runtime environment variables (all of main.cpp and
+    core/config_env.cpp, with their real defaults). Added notes that the full runtime needs
+    LIBCAMERA+NCNN+AUDIO, that unset variables keep defaults, and that unparseable values are ignored
+    and logged. The lumina_agent variables stay in the companion-app section.
+  rationale: >-
+    Developers should be able to see, at a glance, every knob and its default without reading the
+    code. A single Configuration reference with explicit defaults makes the runtime quick to
+    understand and tune.
+  files:
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None.
 ```
