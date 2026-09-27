@@ -49,7 +49,7 @@ option(LUMINA_ENABLE_LIBCAMERA "Build the libcamera capture path" OFF)         #
 option(LUMINA_ENABLE_NCNN "Build the NCNN detector path" OFF)                  # INV-022
 # The Piper TTS + ALSA/bluealsa audio path needs libpiper (third_party/libpiper)
 # and libasound from the sysroot; OFF by default so host builds link neither.
-option(LUMINA_ENABLE_AUDIO "Build the Piper TTS + ALSA/bluealsa audio path" OFF) # INV-022, INV-060
+option(LUMINA_ENABLE_AUDIO "Build the Piper TTS + ALSA/bluealsa audio path" OFF) # INV-022
 # The OpenCV face path (YuNet + SFace) needs OpenCV 4.10 from the target sysroot;
 # OFF by default so the host/mock build links no OpenCV (INV-025, FR-03).
 option(LUMINA_ENABLE_FACE "Build the OpenCV face recognition path" OFF)
@@ -142,9 +142,10 @@ if(LUMINA_ENABLE_NCNN)
 endif()
 
 # ---------------------------------------------------------------------------
-# Optional Piper + ALSA/bluealsa audio path (INV-022, INV-060). libpiper is
-# GPL-3.0 and is linked as a SHARED library behind ITtsEngine: the boundary that
-# INV-060 requires. libasound comes from the target sysroot via pkg-config.
+# Optional Piper + ALSA/bluealsa audio path (INV-022). libpiper is GPL-3.0
+# (compatible with this project's own GPLv3) and is linked as a SHARED library
+# behind ITtsEngine, keeping <piper.h> out of the rest of the runtime. libasound
+# comes from the target sysroot via pkg-config.
 # ---------------------------------------------------------------------------
 if(LUMINA_ENABLE_AUDIO)
     set(LUMINA_LIBPIPER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libpiper" CACHE PATH

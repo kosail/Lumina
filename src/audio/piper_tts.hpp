@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // Piper TTS engine (libpiper C API).
 //
-// Piper is GPL-3.0 (INV-060). It is linked as a shared library and hidden behind
-// ITtsEngine, so the rest of the runtime never sees <piper.h> (AGENTS §5). The
-// pimpl keeps the C header out of every other translation unit.
+// Piper is GPL-3.0 (compatible with this project's own GPLv3). It is linked as a
+// shared library and hidden behind ITtsEngine, so the rest of the runtime never
+// sees <piper.h> (AGENTS §5). The pimpl keeps the C header out of every other
+// translation unit.
 // ---------------------------------------------------------------------------
 
 #pragma once

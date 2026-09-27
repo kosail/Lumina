@@ -562,23 +562,7 @@ further boot optimization is planned. See `docs/PERFORMANCE.md` section 14.
 
 ---
 
-## 7. LICENSING invariants
-
-### INV-060 — GPL-3.0 in the TTS stack is a known, accepted risk  `HARD`
-
-**Statement.** Piper (`piper1-gpl`) and `espeak-ng` are **GPL-3.0**. This is acceptable for the
-contest beta, but it is a **productization blocker** that must be resolved (relicense, isolate, or
-replace the TTS) before any commercial distribution.
-
-**Rationale.** Prevents an accidental commercial release with copyleft contamination.
-
-**Source.** Research (libpiper/piper1-gpl licensing); `RAW_PLAN.md` §11.
-
-**Changeability.** Informational; the risk status changes as the product matures.
-
----
-
-## 8. PROCESS invariants
+## 7. PROCESS invariants
 
 ### INV-070 — Every meaningful change is logged  `PROCESS`
 
@@ -623,7 +607,7 @@ where they differ from Java.
 
 ---
 
-## 9. Index
+## 8. Index
 
 | ID       | Severity | Title |
 |----------|----------|-------|
@@ -654,7 +638,6 @@ where they differ from Java.
 | INV-051  | TARGET   | Spoken-alert latency < 600 ms |
 | INV-052  | TARGET   | Memory < ~450 MB |
 | INV-053  | TARGET   | Startup ready in ~60 s (amended CHG-0082) |
-| INV-060  | HARD     | GPL-3.0 TTS risk accepted for beta |
 | INV-070  | PROCESS  | Every meaningful change is logged |
 | INV-071  | PROCESS  | 6-day deadline and Day-2 gate |
 | INV-072  | PROCESS  | Modular, testable, decoupled, commented |

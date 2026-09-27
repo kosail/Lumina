@@ -222,7 +222,7 @@ All requirements start as `Approved` (the plan was approved by the user on 2026-
 | CON-04 | Exactly one Bluetooth output device (bone-conduction earbuds). | INV-014 |
 | CON-05 | Camera is the OV5647 135° IR-CUT module via libcamera. | INV-011 |
 | CON-06 | One front VL53L0X ToF on I²C1 (model ID `0xEE` confirmed); `XSHUT` on GPIO17; rear sensor deferred. | INV-013, INV-075 |
-| CON-07 | Piper/espeak-ng are GPL-3.0 (accepted for beta). | INV-060 |
+| CON-07 | The project is licensed under GPLv3; Piper/espeak-ng are GPL-3.0 (compatible). | LICENSE |
 
 ---
 
@@ -281,4 +281,4 @@ confirms no network dependency.
 | NFR-06 | INV-003, INV-034 |
 | NFR-07 | INV-030, INV-072 |
 | NFR-08 | INV-020..023 |
-| CON-01..07 | INV-071, INV-010, INV-003, INV-014, INV-011, INV-013/INV-075, INV-060 |
+| CON-01..07 | INV-071, INV-010, INV-003, INV-014, INV-011, INV-013/INV-075, LICENSE |

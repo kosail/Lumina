@@ -372,14 +372,17 @@ verification steps and troubleshooting: **`docs/FACE.md`**.
 
 ## License and third-party notices
 
-Project source in this repository is provided for the **Innovatec 2026 (InnovaTecNM)** contest
-(archived).
-Third-party components keep their own licenses:
+The **Lúmina projects are licensed under the GNU General Public License version 3 (GPLv3)** — see
+[`LICENSE`](LICENSE). Copyleft (C) 2026 Lúmina team.
 
-- **Piper / `piper1-gpl`** and **espeak-ng** are **GPL-3.0**. Acceptable for the beta, but this is
-  a productization consideration (see `INVARIANTS.md` → INV-060).
-- **NCNN** is BSD-3-Clause; **OpenCV** is Apache-2.0; **YOLO11n** weights follow the Ultralytics
-  license (verify before commercial use).
+Lúmina itself is GPLv3; **third-party components keep their own licenses** and are used under their
+own terms:
+
+- **Piper / `piper1-gpl`** and **espeak-ng** — GPL-3.0 (now consistent with Lúmina's own GPLv3).
+- **NCNN** — BSD-3-Clause.
+- **OpenCV** — Apache-2.0; the **YuNet** (MIT) and **SFace** (Apache-2.0) face models.
+- **YOLO11n** weights — Ultralytics license (not committed; verify before redistribution).
+- The companion app's dependencies keep their own licenses (see `kosail/Lumina-Companion`).
 
 ## Contributing
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Cross-build libpiper (OHF-Voice/piper1-gpl) for the Raspberry Pi Zero 2 W. Run on your pc.
 #
-# libpiper is the GPL-3.0 C/C++ Piper engine (see INV-060). It links espeak-ng (built for us
-# by its CMake) and ONNX Runtime. We point it at the official aarch64 ONNX Runtime fetched by
+# libpiper is the GPL-3.0 C/C++ Piper engine (compatible with this project's own GPLv3).
+# It links espeak-ng (built for us by its CMake) and ONNX Runtime. We point it at the
+# official aarch64 ONNX Runtime fetched by
 # scripts/4-fetch_onnxruntime.sh instead of letting libpiper download its own.
 #
 # What this does:

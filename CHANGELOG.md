@@ -3828,4 +3828,43 @@
   follow_up: >-
     None. This is the final entry for the archived runtime; the repository is set read-only on
     GitHub.
+
+# ---------------------------------------------------------------------------
+# CHG-0105 — License the project under GPLv3 and retire INV-060
+# ---------------------------------------------------------------------------
+- id: CHG-0105
+  date: 2026-09-26
+  agent: opencode/deepseek-v4-flash
+  type: chore
+  status: applied
+  invariants: [INV-070]
+  supersedes: null
+  summary: >-
+    Added a LICENSE file (verbatim GNU GPL version 3 text, Copyright (C) 2026 Lúmina team) and
+    licensed the project GPL-3.0-only. Rewrote the README "License and third-party notices" section
+    to state that Lúmina is GPLv3 (permanently) while third-party components keep their own
+    licenses. Removed the runtime invariant INV-060 ("GPL-3.0 in the TTS stack is a known, accepted
+    risk") and its index row; renumbered the following sections. Updated every non-changelog
+    reference to INV-060 (SPECS CON-07 + traceability row; CMakeLists audio comments; tts_engine.hpp
+    and piper_tts.hpp headers; scripts/5-build_libpiper.sh).
+  rationale: >-
+    The contest concluded and the team chose a permanent GPLv3 license. GPLv3 makes the previously
+    "accepted risk" impossible by construction: linking the GPL-3.0 Piper/espeak-ng stack is now
+    consistent with the project's own license, so INV-060 no longer describes a risk and was
+    deleted. All other dependencies (NCNN BSD-3, OpenCV Apache-2.0, YuNet MIT, SFace Apache-2.0)
+    are GPLv3-compatible; YOLO11n weights (Ultralytics, not committed) remain a redistribution note.
+    No code or build behaviour changed.
+  files:
+    - Lumina-BETA-RPI-2W/LICENSE
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/INVARIANTS.md
+    - Lumina-BETA-RPI-2W/SPECS.md
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/src/audio/tts_engine.hpp
+    - Lumina-BETA-RPI-2W/src/audio/piper_tts.hpp
+    - Lumina-BETA-RPI-2W/scripts/5-build_libpiper.sh
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None. The license is permanent GPLv3; INV-060 is retired (IDs are never reused).
 ```

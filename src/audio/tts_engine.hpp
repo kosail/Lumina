@@ -3,8 +3,8 @@
 //
 // ITtsEngine turns Spanish text into PCM and streams it to an IAudioSink. The
 // beta implementation is PiperTts (libpiper + espeak-ng). Kept behind an
-// interface so logic is host-testable and the GPL engine is isolated (INV-030,
-// INV-060, AGENTS §5).
+// interface so logic is host-testable (INV-030, AGENTS §5). Piper is GPL-3.0,
+// which is compatible with this project's own GPLv3 license.
 // ---------------------------------------------------------------------------
 
 #pragma once
