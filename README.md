@@ -1,4 +1,4 @@
-# Lúmina — Beta Runtime
+# Lúmina Beta Runtime
 
 > **Archived. Built for the Innovatec 2026 (InnovaTecNM) contest.**
 > Lúmina was created for the **Innovatec 2026 (InnovaTecNM)** student innovation contest.
@@ -15,7 +15,11 @@ This repository is the **runtime** that runs on the **Raspberry Pi Zero 2 W**, w
 in **C++23**. The earlier Python proof-of-concept we built (the "nightly") is a separate project and
 is **not** part of this codebase.
 
-![The prototype mounted on a pair of glasses](/.github/img/prototype.webp)
+> [!WARNING]
+> I want to clear state that this project was developed entirely using AI, as it was a proof of concept of our idea in real hardware. Everything works, though I only reviewed the code until certain point of the project (around 40 to 45% of the roadmap). I strongly suggest you to take a deeper look into AGENTS, INVARIANTS, SPECS, etc., and be critical against this codebase.
+
+
+![The prototype mounted on a pair of glasses](.github/img/prototype.webp)
 
 ---
 
