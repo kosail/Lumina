@@ -19,6 +19,10 @@ struct LibcameraConfig {
     unsigned int bufferCount = 4;
     // Specific camera id from `cam -l`; empty means "first camera found".
     std::string cameraId;
+    // Clockwise rotation applied to every delivered frame (0/90/180/270) to make it
+    // upright. Defaults to 90 because the camera is physically mounted rotated in the
+    // glasses (CHG-0101). A value that is not a right angle is treated as 0.
+    int rotationDegrees = 90;
 };
 
 // ICamera backed by libcamera, targeting the OV5647 sensor (INV-011).

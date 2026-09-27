@@ -110,12 +110,15 @@ TEST_CASE("defaultConfig narrates the beta set and defers motorcycle/truck") {  
     CHECK_FALSE(has(7)); // truck deferred
 
     // Obstacle subset: excludes small classes; also cannot contain a deferred class.
+    // Person (0) is deliberately excluded so people are narrated, not turned into a
+    // generic obstacle; the class-agnostic IR channel covers the imminent case.
     const auto& obstacles = config.obstacleClassIds;
     const auto isObstacle = [&obstacles](int id) {
         return std::find(obstacles.begin(), obstacles.end(), id) != obstacles.end();
     };
-    CHECK(isObstacle(0));
-    CHECK(isObstacle(56));
+    CHECK_FALSE(isObstacle(0));  // person is narrated, not an obstacle
+    CHECK(isObstacle(2));        // car
+    CHECK(isObstacle(56));       // chair
     CHECK_FALSE(isObstacle(15)); // cat is not an obstacle
     CHECK_FALSE(isObstacle(24)); // backpack is not an obstacle
     CHECK_FALSE(isObstacle(3));  // motorcycle is deferred
@@ -202,4 +205,24 @@ TEST_CASE("clampConfig repairs out-of-range audio sink fields") {
     CHECK(fixed.audioSinkRetryIntervalMs == 60000);
     CHECK(fixed.audioSinkMaxRetries == 10000);
     CHECK(isValid(fixed));
+}
+
+TEST_CASE("camera rotation defaults to 90 and clamps to a right angle") {
+    const auto config = defaultConfig();
+    CHECK(config.cameraRotationDegrees == 90);  // camera mounted rotated (CHG-0101)
+    CHECK(isValid(config));
+
+    auto bad = defaultConfig();
+    bad.cameraRotationDegrees = 45;  // not a right angle
+    CHECK(clampConfig(bad).cameraRotationDegrees == 0);
+    bad.cameraRotationDegrees = 360;
+    CHECK(clampConfig(bad).cameraRotationDegrees == 0);
+
+    bad.cameraRotationDegrees = 270;  // a valid override is kept
+    CHECK(clampConfig(bad).cameraRotationDegrees == 270);
+    CHECK(isValid(clampConfig(bad)));
+
+    auto invalid = defaultConfig();
+    invalid.cameraRotationDegrees = 45;
+    CHECK_FALSE(isValid(invalid));
 }

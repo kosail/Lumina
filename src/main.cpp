@@ -37,6 +37,7 @@
 #include "capture/libcamera_source.hpp"
 #include "core/config_env.hpp"
 #include "core/logging.hpp"
+#include "i18n/es.hpp"
 #include "sensors/proximity.hpp"
 #include "status/status_writer.hpp"
 #include "vision/face_recognizer.hpp"
@@ -120,6 +121,8 @@ int main(int argc, char** argv)
         lumina::core::clampConfig(lumina::core::applyEnvOverrides(lumina::core::defaultConfig()));
 
     lumina::capture::LibcameraConfig cameraConfig;
+    // Correct the physical camera mount (CHG-0101); default 90, env-overridable.
+    cameraConfig.rotationDegrees = config.cameraRotationDegrees;
     lumina::capture::LibcameraSource camera(cameraConfig);
 
     lumina::vision::DetectorConfig detectorConfig;
@@ -187,6 +190,36 @@ int main(int argc, char** argv)
     std::vector<std::string> warmPhrases = lumina::app::phraseCatalog(config);
     const std::vector<std::string> pairPhrases = lumina::app::twoClassPhraseCatalog(config);
     warmPhrases.insert(warmPhrases.end(), pairPhrases.begin(), pairPhrases.end());
+    // Person-focused prewarm up to 10 (CHG-0103): every sentence that names a person,
+    // alone or paired with any other class, so a crowd never triggers a live synthesis.
+    // Overlaps with the catalog above (person counts 1..3, person pairs 1..2) are
+    // harmless: warm() skips phrases already present in the cache.
+    {
+        const lumina::i18n::ObjectClass person = lumina::i18n::ObjectClass::Person;
+        for (int p = 1; p <= 10; ++p) {
+            warmPhrases.push_back(lumina::app::formatCount(person, p) + " enfrente.");
+        }
+        for (const int otherId : config.classIds) {
+            if (otherId == 0) {  // person itself
+                continue;
+            }
+            const lumina::i18n::ObjectClass other = lumina::i18n::fromCocoId(otherId);
+            if (other == lumina::i18n::ObjectClass::Unknown) {
+                continue;
+            }
+            for (int p = 1; p <= 10; ++p) {
+                const std::string personText = lumina::app::formatCount(person, p);
+                for (int o = 1; o <= 10; ++o) {
+                    const std::string otherText = lumina::app::formatCount(other, o);
+                    // Match describeDetections: higher count first; ties keep the
+                    // catalog order (person is ObjectClass index 0, so person first).
+                    warmPhrases.push_back(p >= o
+                                              ? personText + " y " + otherText + " enfrente."
+                                              : otherText + " y " + personText + " enfrente.");
+                }
+            }
+        }
+    }
     const std::vector<std::string> alertPhrases = lumina::app::alertPhraseCatalog();
     warmPhrases.insert(warmPhrases.end(), alertPhrases.begin(), alertPhrases.end());
 #if defined(LUMINA_HAS_FACE)

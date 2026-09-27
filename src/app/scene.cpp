@@ -32,11 +32,13 @@ std::optional<alerts::Alert> buildSceneAlert(const std::vector<core::Detection>&
         return std::nullopt;
     }
 
-    // Is any obstacle class close AND in the user's path? Near wins over Mid.
-    // The alert phrase is generic (it does not name the object), so we only need to
-    // know the closest band, not which detection produced it.
+    // Is any obstacle class NEAR and in the user's path? The alert phrase is generic
+    // (it does not name the object), so we only need to know whether one is present.
+    // A Mid-distance obstacle-class object is NOT an obstacle alert: it falls through
+    // to the description so the object is named ("una silla enfrente"). This keeps
+    // object narration dominant, while a genuinely large, centered hazard — or the
+    // class-agnostic IR channel at short range — still warns.
     bool foundNear = false;
-    bool foundMid = false;
 
     for (const core::Detection& detection : detections) {
         const bool isObstacleClass =
@@ -48,25 +50,18 @@ std::optional<alerts::Alert> buildSceneAlert(const std::vector<core::Detection>&
         if (!processing::isInPath(detection.box, frameWidth, thresholds)) {
             continue;
         }
-        const processing::DistanceBand band =
-            processing::classifyDistance(detection.box, frameWidth, frameHeight, thresholds);
-        if (band == processing::DistanceBand::Near) {
+        if (processing::classifyDistance(detection.box, frameWidth, frameHeight, thresholds) ==
+            processing::DistanceBand::Near) {
             foundNear = true;
-        } else if (band == processing::DistanceBand::Mid) {
-            foundMid = true;
         }
     }
 
-    if (foundNear || foundMid) {
+    if (foundNear) {
         alerts::Alert alert;
-        // A Near obstacle preempts narration (Warning). A Mid obstacle is not
-        // imminent, so it does NOT preempt: it uses Description priority and is
-        // spoken only when the arbiter is free.
-        alert.priority =
-            foundNear ? alerts::Priority::Warning : alerts::Priority::Description;
+        alert.priority = alerts::Priority::Warning;  // Near preempts narration
         alert.source = alerts::Source::Obstacle;
-        alert.text = i18n::proximityAlertPhrase(foundNear); // Near is the urgent wording
-        alert.dedupKey = alert.text;                        // same wording => same scene
+        alert.text = i18n::proximityAlertPhrase(true);
+        alert.dedupKey = alert.text;  // same wording => same scene
         alert.detectedAt = capturedAt;
         return alert;
     }

@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "core/frame.hpp"
+#include "core/frame_transform.hpp"
 #include "core/logging.hpp"
 #include "core/time.hpp"
 
@@ -253,6 +254,9 @@ bool LibcameraSource::Impl::start() {
     LUMINA_LOG_INFO("capturing {} at {} ({} buffers)", m_stream->configuration().toString(),
                     m_stream->configuration().pixelFormat.toString(),
                     m_stream->configuration().bufferCount);
+    if (m_config.rotationDegrees != 0) {
+        LUMINA_LOG_INFO("frames rotated {} deg clockwise to upright", m_config.rotationDegrees);
+    }
 
     m_allocator = std::make_unique<libcamera::FrameBufferAllocator>(m_camera);
     const int allocateResult = m_allocator->allocate(m_stream);
@@ -377,6 +381,13 @@ core::Frame LibcameraSource::Impl::convert(const libcamera::FrameBuffer& buffer)
         if (plane.valid()) {
             frame.data.insert(frame.data.end(), plane.data(), plane.data() + plane.length());
         }
+    }
+
+    // Rotate to upright (CHG-0101): the camera is mounted rotated in the glasses, so
+    // the frame is sideways until corrected. A non-RGB888 or empty frame is returned
+    // unchanged by the helper.
+    if (m_config.rotationDegrees != 0) {
+        frame = core::rotateFrame(frame, m_config.rotationDegrees);
     }
     return frame;
 }

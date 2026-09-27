@@ -249,7 +249,8 @@ in order: **decimation** (infer every N frames) → **256×256** → NanoDet‑P
   are no longer narrated in the beta, so that particular confusion no longer reaches the user.)
 - Repetition is governed by the Day‑3 alert arbiter (`src/alerts/arbiter.*`): an unchanged scene is
   not repeated more than once per 4 s per phrase; a changed scene can speak again immediately; a
-  Near in‑path obstacle preempts narration (a Mid one does not).
+  Near in‑path obstacle preempts narration, while a Mid obstacle-class object is **narrated** rather
+  than turned into a generic warning (CHG‑0100).
 
 > **WARNING — live synthesis is not interruptible (later stage).** libpiper (pinned `251fdb9d`)
 > exposes **no cancellation** (`piper.h` has no stop/cancel call), and `piper_synthesize_next` can
@@ -294,7 +295,7 @@ after the first chunk so it stays fast.
 | live multi‑class synthesis | **6667–9217 ms** (claude) to first audio | lazy cache miss; eliminated on the warmed path by CHG‑0055 |
 | FPS / RSS | **4.1–4.3** / **189 MB (claude), 148 MB (ald‑xlow)** | well under INV‑052 |
 | static‑scene repeat | warnings ~9–24 s apart | no ~2 s churn |
-| Mid alert | `obstáculo cerca.` detected **and spoken** | non‑preempting; may queue behind live synthesis |
+| Mid obstacle‑class object | narrated (e.g. `una silla enfrente.`) | no longer a generic obstacle alert; only Near obstacles warn (CHG‑0100) |
 
 **Crash found and fixed (CHG‑0056):** the first post‑change run segfaulted on Ctrl‑C with
 libcamera's "Camera in Stopping state trying queueRequest()". Root cause was a teardown race between

@@ -22,6 +22,10 @@ struct Config {
     InferPrecision precision = InferPrecision::Fp16;  // INV-012
     float scoreThreshold = 0.25F;                     // minimum detection confidence
     float nmsThreshold = 0.45F;                       // non-max-suppression IoU cutoff
+    // Clockwise rotation applied to every captured frame to make it upright (CHG-0101).
+    // The camera is physically mounted rotated in the glasses, so the default is 90.
+    // Only the four right angles are valid; clampConfig snaps anything else to 0.
+    int cameraRotationDegrees = 90;
     // Distance heuristic (FR-02). An object that covers a large share of the frame
     // is treated as "near" because the beta has no depth camera in the vision path
     // yet (the VL53L0X sensor arrives in Phase C). Fractions are box area / frame
@@ -30,7 +34,7 @@ struct Config {
     // Invariant: midAreaFraction <= nearAreaFraction (enforced by clampConfig).
     float nearAreaFraction = 0.20F;                   // >= this fraction => Near
     float midAreaFraction = 0.06F;                    // >= this fraction => Mid, else Far
-    float pathCenterTolerance = 0.35F;                // |centerX - W/2| <= tol*W => in path
+    float pathCenterTolerance = 0.25F;                // |centerX - W/2| <= tol*W => in path
     // Maximum number of classes named in one description sentence. Capped at 2 so
     // sentences match the pre-warmed two-class phrase catalog (fewer live Piper
     // syntheses, which cannot be preempted). FR-01/FR-08.
@@ -41,10 +45,12 @@ struct Config {
     // nice-to-have (INV-040); their i18n entries stay dormant so re-enabling them
     // is a config-only change (FR-08).
     std::vector<int> classIds{0, 1, 2, 5, 15, 16, 24, 56, 57, 60};
-    // Subset of classIds that counts as an obstacle for proximity alerts (FR-02):
-    // person, bicycle, car, bus, chair, couch, dining table. Small classes are
-    // narrated but do not raise obstacle alerts.
-    std::vector<int> obstacleClassIds{0, 1, 2, 5, 56, 57, 60};
+    // Subset of classIds that counts as an obstacle for the camera distance heuristic
+    // (FR-02): bicycle, car, bus, chair, couch, dining table. Small classes are
+    // narrated but do not raise obstacle alerts. `person` (0) is deliberately NOT an
+    // obstacle class: people are named ("una persona enfrente") and the class-agnostic
+    // IR proximity channel covers the imminent case at short range.
+    std::vector<int> obstacleClassIds{1, 2, 5, 56, 57, 60};
     int faceStableFrames = 3;                         // frames before announcing a name
     // SFace cosine-similarity cutoff. The OpenCV Zoo reference uses 0.363 (cosine);
     // the old 0.50 was stricter and risked rejecting real users (FR-03.2).
@@ -119,6 +125,11 @@ struct Config {
     }
     config.scoreThreshold = std::clamp(config.scoreThreshold, 0.0F, 1.0F);
     config.nmsThreshold = std::clamp(config.nmsThreshold, 0.0F, 1.0F);
+    // Only the four right angles are meaningful; snap anything else to "no rotation".
+    if (config.cameraRotationDegrees != 0 && config.cameraRotationDegrees != 90 &&
+        config.cameraRotationDegrees != 180 && config.cameraRotationDegrees != 270) {
+        config.cameraRotationDegrees = 0;
+    }
     config.nearAreaFraction = std::clamp(config.nearAreaFraction, 0.0F, 1.0F);
     // Clamp mid AFTER near so the ordering invariant holds even for bad input.
     config.midAreaFraction = std::clamp(config.midAreaFraction, 0.0F, config.nearAreaFraction);
@@ -153,6 +164,8 @@ struct Config {
 // clampConfig for validating values we produced ourselves.
 [[nodiscard]] inline bool isValid(const Config& config) noexcept {
     return isSupportedInferSize(config.inferWidth, config.inferHeight) &&
+           (config.cameraRotationDegrees == 0 || config.cameraRotationDegrees == 90 ||
+            config.cameraRotationDegrees == 180 || config.cameraRotationDegrees == 270) &&
            config.scoreThreshold >= 0.0F && config.scoreThreshold <= 1.0F &&
            config.nmsThreshold >= 0.0F && config.nmsThreshold <= 1.0F &&
            config.nearAreaFraction >= 0.0F && config.nearAreaFraction <= 1.0F &&

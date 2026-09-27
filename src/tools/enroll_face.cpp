@@ -29,6 +29,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/config.hpp"
+#include "core/config_env.hpp"
 #include "core/logging.hpp"
 #include "core/time.hpp"
 #include "vision/face.hpp"
@@ -284,6 +286,12 @@ int main(int argc, char** argv)
 #if defined(LUMINA_HAS_LIBCAMERA)
     if (options.camera) {
         lumina::capture::LibcameraConfig cameraConfig;  // default 640x480
+        // Honour the same mount correction as the runtime (CHG-0101): the glasses
+        // camera is mounted rotated, so a live enrollment would otherwise capture
+        // sideways faces. LibcameraConfig already defaults to 90; this lets the
+        // LUMINA_CAMERA_ROTATION override apply here too.
+        cameraConfig.rotationDegrees =
+            lumina::core::applyEnvOverrides(lumina::core::defaultConfig()).cameraRotationDegrees;
         lumina::capture::LibcameraSource camera(cameraConfig);
         if (!camera.start()) {
             std::fprintf(stderr, "enroll: failed to start the camera\n");

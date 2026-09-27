@@ -42,9 +42,9 @@ const TimePoint kCaptured = TimePoint{} + std::chrono::milliseconds(1234);
 TEST_CASE("scene: a near in-path obstacle becomes an urgent Warning")
 {
     const Config config = defaultConfig();
-    // 40x60 on 100x100 = 0.24 area (Near), centred at x=50 => in path.
+    // Car (2), 40x60 on 100x100 = 0.24 area (Near), centred at x=50 => in path.
     const auto alert = buildSceneAlert(
-        {makeDetection(0, 30.0F, 0.0F, 40.0F, 60.0F)}, config, 100, 100, kCaptured);
+        {makeDetection(2, 30.0F, 0.0F, 40.0F, 60.0F)}, config, 100, 100, kCaptured);
     REQUIRE(alert.has_value());
     CHECK(alert->priority == Priority::Warning);
     CHECK(alert->source == Source::Obstacle);
@@ -53,29 +53,41 @@ TEST_CASE("scene: a near in-path obstacle becomes an urgent Warning")
     CHECK(alert->detectedAt == kCaptured);
 }
 
-TEST_CASE("scene: a mid in-path obstacle uses the gentler, non-preempting phrase")
+TEST_CASE("scene: a mid in-path obstacle-class object is described, not a generic obstacle")
 {
     const Config config = defaultConfig();
-    // 30x30 on 100x100 = 0.09 (Mid), centred at x=50.
+    // Chair (56), 30x30 on 100x100 = 0.09 (Mid), centred. Mid no longer shadows
+    // narration, so the object is named instead of "obstáculo cerca.".
     const auto alert = buildSceneAlert(
-        {makeDetection(0, 35.0F, 0.0F, 30.0F, 30.0F)}, config, 100, 100, kCaptured);
+        {makeDetection(56, 35.0F, 0.0F, 30.0F, 30.0F)}, config, 100, 100, kCaptured);
     REQUIRE(alert.has_value());
-    // Non-preempting: Description priority, but still tagged as an obstacle.
     CHECK(alert->priority == Priority::Description);
-    CHECK(alert->source == Source::Obstacle);
-    CHECK(alert->text == "obstáculo cerca.");
+    CHECK(alert->source == Source::Description);
+    CHECK(alert->text == "una silla enfrente.");
+}
+
+TEST_CASE("scene: a near centered person is described, not warned")
+{
+    const Config config = defaultConfig();
+    // Person (0) is intentionally not an obstacle class: 0.24 area, centred.
+    const auto alert = buildSceneAlert(
+        {makeDetection(0, 30.0F, 0.0F, 40.0F, 60.0F)}, config, 100, 100, kCaptured);
+    REQUIRE(alert.has_value());
+    CHECK(alert->priority == Priority::Description);
+    CHECK(alert->source == Source::Description);
+    CHECK(alert->text == "una persona enfrente.");
 }
 
 TEST_CASE("scene: a near but off-path obstacle is only described")
 {
     const Config config = defaultConfig();
-    // Same size as the Near case but centred at 86 (|86-50| = 36 > 35) => off path.
+    // Car, same size as the Near case but centred at 86 (|86-50| = 36 > 25) => off path.
     const auto alert = buildSceneAlert(
-        {makeDetection(0, 66.0F, 0.0F, 40.0F, 60.0F)}, config, 100, 100, kCaptured);
+        {makeDetection(2, 66.0F, 0.0F, 40.0F, 60.0F)}, config, 100, 100, kCaptured);
     REQUIRE(alert.has_value());
     CHECK(alert->priority == Priority::Description);
     CHECK(alert->source == Source::Description);
-    CHECK(alert->text == "una persona enfrente.");
+    CHECK(alert->text == "un carro enfrente.");
 }
 
 TEST_CASE("scene: a small in-path object is only described")

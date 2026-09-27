@@ -1,5 +1,11 @@
 # Lúmina — Beta Runtime
 
+> **Archived — built for the Innovatec 2026 (InnovaTecNM) contest.**
+> Lúmina was created for the **Innovatec 2026 (InnovaTecNM)** student innovation contest. The
+> project did not advance beyond the **local stage**. This repository is **archived** (read-only) and
+> preserved as the final state; no further development is planned. Code, docs, and tests remain as a
+> complete reference.
+
 Lúmina is an edge-AI assistive device for blind and low-vision users. A camera observes the
 environment; on-device AI interprets it; the result is spoken through bone-conduction audio.
 Everything runs locally — no cloud, no internet connection required.
@@ -8,8 +14,8 @@ This repository is the **real runtime** for the **Raspberry Pi Zero 2 W**, writt
 It is a from-scratch build; the original Python proof-of-concept ("nightly") is a separate
 prototype and is **not** part of this codebase.
 
-> Status: **active beta development.** The runtime is not production-ready. Interfaces, options,
-> and commands in this README describe the intended shape and may change as implementation lands.
+> Status: **final / archived.** See [Final state](#final-state-what-shipped) and
+> [Known limitations](#known-limitations) below for exactly what shipped and what did not.
 
 ---
 
@@ -22,6 +28,57 @@ prototype and is **not** part of this codebase.
 
 **Out of scope for the beta:** currency recognition, offline navigation, indigenous-language
 support, cloud processing, desktop/GUI, and multi-device Bluetooth.
+
+## Final state (what shipped)
+
+Verified on-device at the end of the project (see `CHANGELOG.md` and `docs/PERFORMANCE.md`):
+
+- **Object/animal/person detection + Spanish narration** — YOLO11n (NCNN) at 320×256, ~4.3 FPS on
+  the Pi Zero 2 W; sentences such as "una persona enfrente." / "una silla enfrente."
+- **Prioritized obstacle alerts** — a camera Near-path Warning ("cuidado, obstáculo cerca.") plus a
+  class-agnostic front time-of-flight **Safety** alert at ≤0.8 m; a single arbiter orders the queue
+  and preempts speech.
+- **Face recognition** — YuNet + SFace (OpenCV) for a small set of enrolled people, greeted by name
+  ("<nombre> está enfrente") with a per-person cooldown.
+- **Front VL53L0X proximity** (I²C1) — the low-latency safety channel (FR-10); the rear sensor was
+  deferred.
+- **Bluetooth A2DP audio** to the single paired bone-conduction earbud, with a sink watchdog and
+  boot autostart (systemd).
+- **Companion ecosystem (FR-11)** — a separate `lumina_agent` owns the network: a 1 Hz UDP telemetry
+  broadcast, a token-gated TCP control channel (volume, people list, runtime start/stop, enrollment),
+  and the local `/run/lumina/status` handoff. The companion client is `kosail/Lumina-Companion`.
+- **On-disk TTS phrase cache** — pre-rendered Piper audio streamed from disk so fixed phrases play
+  with near-zero latency; the prewarm set is configurable.
+- **Camera-mount software rotation** (`LUMINA_CAMERA_ROTATION`) because the camera is physically
+  mounted rotated in the glasses.
+- **Environment-tunable configuration** for the demo-critical knobs (audio-sink behaviour, obstacle
+  thresholds, camera rotation, and more).
+
+Measured highlights: detection **4.1–4.3 FPS**; cached-alert `event→speech-start` **≈ 250–300 ms**
+(+Bluetooth); resident memory **≈ 289 MB** with face recognition. Details in `docs/PERFORMANCE.md`.
+
+## Known limitations
+
+- **Live (uncached) Piper synthesis cannot be preempted** — libpiper exposes no cancellation and can
+  return a whole utterance as a single chunk. Mitigated by prewarming the fixed vocabulary and
+  capping descriptions to 2 classes; a genuinely novel sentence may delay a safety alert. Tracked as
+  a later-stage item in `docs/PERFORMANCE.md`.
+- **Rear proximity sensor deferred**; only the front VL53L0X is present.
+- **Physical volume buttons deferred** indefinitely (`docs/DEFERRED.md`, entry D-001).
+- **Single Bluetooth audio device** — one A2DP earbud, no multi-device support.
+- **Face recognition** targets a small set (~3–4 enrolled people).
+- **The camera is physically mounted rotated**; corrected in software (`LUMINA_CAMERA_ROTATION=90`).
+- **Runtime-side UDP telemetry** (`LUMINA_ENABLE_TELEMETRY`) is off; the network lives in
+  `lumina_agent`.
+- **Not committed:** model weights, `third_party/` builds, and the cross sysroot — rebuild them from
+  the scripts and `docs/CROSS_COMPILE.md`.
+- **Modest throughput** (~4.3 FPS) by design for the Pi Zero 2 W (see INV-050/INV-051).
+
+## Contest and outcome
+
+Lúmina was built for the **Innovatec 2026 (InnovaTecNM)** contest. The team reached the **local
+stage** and the project **did not advance**. This repository is archived as the final state and as a
+reference; the companion client is archived separately in `kosail/Lumina-Companion`.
 
 ## Target hardware
 
@@ -199,6 +256,13 @@ Runtime environment variables (all optional):
 | `LUMINA_AUDIO_SINK_MAX_RETRIES` | Audio-sink `open()` attempts before giving up (default `60`; the unit sets `10000` ≈ 8.3 h for demos) |
 | `LUMINA_AUDIO_SINK_RETRY_MS` | Pause between audio-sink `open()` attempts, ms (default `3000`) |
 | `LUMINA_PROXIMITY_ENABLED` | `0`/`false` disables the proximity sensor (default `true`) |
+| `LUMINA_NEAR_AREA_FRACTION` | Box area / frame area at/above which a centered camera obstacle raises the generic Warning (default `0.20`) |
+| `LUMINA_MID_AREA_FRACTION` | Mid distance band (default `0.06`); **no longer drives alerts** — Mid obstacle-class objects are narrated, not warned |
+| `LUMINA_PATH_CENTER_TOLERANCE` | Horizontal half-band counted as "in path", as a fraction of frame width (default `0.25`) |
+| `LUMINA_PROXIMITY_THRESHOLD_M` | IR distance at/below which the class-agnostic Safety alert fires (default `0.8`) |
+| `LUMINA_PROXIMITY_RELEASE_M` | IR hysteresis release distance (default `1.2`) |
+| `LUMINA_OBSTACLE_CLASSES` | CSV of COCO ids treated as camera obstacles (default `1,2,5,56,57,60`; person `0` excluded so people are narrated) |
+| `LUMINA_CAMERA_ROTATION` | Clockwise rotation applied to every captured frame to make it upright, in degrees: `0`/`90`/`180`/`270` (default `90`; the camera is mounted rotated in the glasses) |
 | `ORT_DISABLE_TELEMETRY` | Set to `1` to silence ONNX Runtime telemetry. **Privacy: the runtime sets this in-process before ONNX Runtime initializes (CHG-0080); you do not need to export it, and Lúmina never phones home (INV-003/INV-034).** |
 
 ### Companion app (FR-11)
@@ -266,18 +330,19 @@ Recommended system tuning:
 - On-device performance: `tests/bench_fps`, `tests/bench_latency`
 - Record FPS, latency, and resident memory in `CHANGELOG.md`.
 
-## Roadmap
+## What shipped / what was deferred
 
-1. Runtime skeleton, capture, detector, TTS-to-Bluetooth vertical slice (Day-2 gate). — **done**
-2. Alert arbiter + Spanish alert catalog (Day 3). — **done** (see `docs/PERFORMANCE.md` §11)
-3. Face enrollment and recognition (Day 4). — **implemented and verified on-device** (photos CHG-0073,
-   live camera CHG-0083; see `docs/FACE.md`)
-4. Boot-time Bluetooth autoconnect, soak testing, demo hardening. — **BT autoconnect + autostart
-   implemented** (`scripts/bt_setup.sh`, `scripts/9-setup_autostart.sh`, runtime sink watchdog;
-   see `docs/BLUETOOTH.md`, CHG-0077). The sink-watchdog `running`/`stop` polarity was fixed in
-   CHG-0079 (it previously skipped the wait and exited 0 immediately).
-5. Optional UDP telemetry (only after everything else passes).
-6. Front VL53L0X proximity alert — **implemented** (FR-10, `-DLUMINA_ENABLE_PROXIMITY=ON`, CHG-0074); rear sensor deferred to the very end (`docs/PROXIMITY.md`).
+**Shipped** (verified on-device): the runtime skeleton + libcamera capture + NCNN detector +
+Piper→Bluetooth vertical slice; the alert arbiter and Spanish catalog; face enrollment and
+recognition (photos CHG-0073, live camera CHG-0083); Bluetooth autoconnect + boot autostart +
+sink watchdog (CHG-0077/0079); the front VL53L0X proximity alert (FR-10, CHG-0074); the companion
+agent + app ecosystem (FR-11); the on-disk phrase cache; camera-mount software rotation (CHG-0101);
+and the demo-hardening environment tuning (CHG-0098..0103).
+
+**Deferred / out of scope:** rear proximity sensor (`docs/PROXIMITY.md`); physical volume buttons
+(`docs/DEFERRED.md` D-001); currency recognition; OCR/text reading; offline navigation;
+indigenous-language support; cloud processing; multi-device Bluetooth; INT8 quantization and the
+dual-voice fallback.
 
 ## Face enrollment (FR-04)
 
@@ -307,7 +372,8 @@ verification steps and troubleshooting: **`docs/FACE.md`**.
 
 ## License and third-party notices
 
-Project source in this repository is provided for the InnovaTecNM contest beta.
+Project source in this repository is provided for the **Innovatec 2026 (InnovaTecNM)** contest
+(archived).
 Third-party components keep their own licenses:
 
 - **Piper / `piper1-gpl`** and **espeak-ng** are **GPL-3.0**. Acceptable for the beta, but this is

@@ -22,8 +22,9 @@ namespace lumina::app {
 // Build the alert for one frame, or nullopt when there is nothing worth saying.
 //
 // `capturedAt` is carried into the alert so the speech worker can report
-// event->audible latency (INV-051). Precedence: nearest in-path obstacle (Near,
-// then Mid), else the multi-class Spanish description.
+// event->audible latency (INV-051). Precedence: a Near in-path obstacle (generic
+// Warning), else the multi-class Spanish description. A Mid-distance obstacle-class
+// object is intentionally NOT an obstacle alert — it is named by the description.
 //
 // `proximityMeters` is the freshest front time-of-flight distance, when valid
 // (FR-02.4). The sensor takes precedence at short range: while it reports an

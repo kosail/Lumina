@@ -79,6 +79,7 @@ target_compile_options(lumina_logging PUBLIC -Wall -Wextra -Wpedantic)
 # ---------------------------------------------------------------------------
 add_library(lumina_core STATIC
     src/core/config_env.cpp
+    src/core/frame_transform.cpp
     src/core/power.cpp
     src/i18n/es.cpp
     src/vision/yolo11_decode.cpp

@@ -268,6 +268,36 @@ journalctl -u lumina -b | grep -i 'audio sink ready'
 
 ---
 
+## 9c. Camera mounted rotated (software rotation)
+
+The camera in the glasses is physically mounted **rotated**, so libcamera delivers sideways frames
+and recognition fails. The runtime rotates every frame back to upright in software
+(`LUMINA_CAMERA_ROTATION`, default `90` = clockwise correction; CHG-0101). This applies to the
+runtime **and** to `lumina_enroll --camera`, so app camera-enrollment works too.
+
+- To confirm the angle, dump one corrected frame and view it on the laptop:
+
+```bash
+cd ~/lumina
+# --dump waits `--warmup` seconds (default 2) before saving the newest frame, because
+# the first frames after start() are black until auto-exposure converges.
+LUMINA_CAMERA_ROTATION=90 ./lumina_capture_test 640 480 30 --dump /tmp/frame.ppm
+# The tool prints "frame bytes: mean=.. min=.. max=.."; a mean near 0 means black.
+scp pi@<pi-host>:/tmp/frame.ppm .
+magick /tmp/frame.ppm frame.png          # PPM is niche; convert before viewing
+```
+
+- **The dumped frame is not black** (mean is not ~0) and points at a lit scene. If it is black,
+  the warm-up was too short (`--warmup 4`) or the lens is covered / the room is dark.
+- If the image is upright, keep `90`. If it is rotated the wrong way, use `270` (and `0` on a
+  bench with the camera flat).
+- Bake the value into **both** unit files if you override the default:
+  `Environment=LUMINA_CAMERA_ROTATION=90` in `scripts/lumina.service` and
+  `scripts/lumina-agent.service` (the agent spawns `lumina_enroll`, which inherits its env), then
+  re-run `scripts/9-setup_autostart.sh` and `scripts/10-setup_agent.sh --start`.
+
+---
+
 ## 10. Connect a client
 
 1. Join the **Lumina** hotspot from the phone/laptop.

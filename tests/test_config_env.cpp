@@ -23,7 +23,9 @@ using lumina::core::defaultConfig;
 using lumina::core::EnvLookup;
 using lumina::core::isValid;
 using lumina::core::parseEnvBool;
+using lumina::core::parseEnvFloat;
 using lumina::core::parseEnvInt;
+using lumina::core::parseEnvIntList;
 
 namespace {
 
@@ -145,4 +147,90 @@ TEST_CASE("an injected lookup that is empty is treated as unset")
     const auto result = applyEnvOverrides(base, EnvLookup{});
     CHECK(result.audioSinkMaxRetries == base.audioSinkMaxRetries);
     CHECK(isValid(result));
+}
+
+TEST_CASE("parseEnvFloat accepts decimals in range and rejects the rest")
+{
+    CHECK(parseEnvFloat("0.25", 0.0F, 1.0F) == std::optional<float>(0.25F));
+    CHECK(parseEnvFloat(" 0.5 ", 0.0F, 1.0F) == std::optional<float>(0.5F));
+    CHECK(parseEnvFloat("1", 0.0F, 1.0F) == std::optional<float>(1.0F));
+
+    CHECK_FALSE(parseEnvFloat("", 0.0F, 1.0F).has_value());
+    CHECK_FALSE(parseEnvFloat("abc", 0.0F, 1.0F).has_value());
+    CHECK_FALSE(parseEnvFloat("1.5", 0.0F, 1.0F).has_value());  // above range
+    CHECK_FALSE(parseEnvFloat("0.5x", 0.0F, 1.0F).has_value()); // trailing garbage
+}
+
+TEST_CASE("parseEnvIntList accepts a CSV of ints and rejects malformed input")
+{
+    const auto ok = parseEnvIntList("1,2,5,56,57,60", 0, 90);
+    REQUIRE(ok.has_value());
+    CHECK(*ok == std::vector<int>{1, 2, 5, 56, 57, 60});
+
+    const auto spaced = parseEnvIntList(" 1 , 2 ", 0, 90);
+    REQUIRE(spaced.has_value());
+    CHECK(*spaced == std::vector<int>{1, 2});
+
+    CHECK_FALSE(parseEnvIntList("", 0, 90).has_value());
+    CHECK_FALSE(parseEnvIntList("1,,2", 0, 90).has_value());  // empty item
+    CHECK_FALSE(parseEnvIntList("1,", 0, 90).has_value());    // trailing comma
+    CHECK_FALSE(parseEnvIntList("1,x", 0, 90).has_value());   // bad item
+    CHECK_FALSE(parseEnvIntList("1,91", 0, 90).has_value());  // out of range
+}
+
+TEST_CASE("applyEnvOverrides applies the detection tuning values")
+{
+    const auto result = applyEnvOverrides(defaultConfig(),
+                                          fakeEnv({{"LUMINA_NEAR_AREA_FRACTION", "0.3"},
+                                                   {"LUMINA_MID_AREA_FRACTION", "0.1"},
+                                                   {"LUMINA_PATH_CENTER_TOLERANCE", "0.2"},
+                                                   {"LUMINA_PROXIMITY_THRESHOLD_M", "1.0"},
+                                                   {"LUMINA_PROXIMITY_RELEASE_M", "1.5"},
+                                                   {"LUMINA_OBSTACLE_CLASSES", "1,2,5"}}));
+    CHECK(result.nearAreaFraction == doctest::Approx(0.3F));
+    CHECK(result.midAreaFraction == doctest::Approx(0.1F));
+    CHECK(result.pathCenterTolerance == doctest::Approx(0.2F));
+    CHECK(result.proximityThresholdM == doctest::Approx(1.0F));
+    CHECK(result.proximityReleaseM == doctest::Approx(1.5F));
+    CHECK(result.obstacleClassIds == std::vector<int>{1, 2, 5});
+    CHECK(isValid(result));
+}
+
+TEST_CASE("applyEnvOverrides reports invalid detection values and keeps the defaults")
+{
+    const auto base = defaultConfig();
+    std::vector<std::pair<std::string, std::string>> invalid;
+    const auto onInvalid = [&invalid](std::string_view name, std::string_view value) {
+        invalid.emplace_back(std::string(name), std::string(value));
+    };
+
+    const auto result =
+        applyEnvOverrides(base,
+                          fakeEnv({{"LUMINA_PATH_CENTER_TOLERANCE", "wide"},
+                                   {"LUMINA_OBSTACLE_CLASSES", "1,,2"}}),
+                          onInvalid);
+
+    REQUIRE(invalid.size() == 2);
+    CHECK(result.pathCenterTolerance == doctest::Approx(base.pathCenterTolerance));
+    CHECK(result.obstacleClassIds == base.obstacleClassIds);
+    CHECK(isValid(result));
+}
+
+TEST_CASE("applyEnvOverrides applies and validates the camera rotation")
+{
+    const auto applied =
+        applyEnvOverrides(defaultConfig(), fakeEnv({{"LUMINA_CAMERA_ROTATION", "270"}}));
+    CHECK(applied.cameraRotationDegrees == 270);
+
+    // A non-right angle is reported and the default (90) is kept.
+    std::vector<std::pair<std::string, std::string>> invalid;
+    const auto onInvalid = [&invalid](std::string_view name, std::string_view value) {
+        invalid.emplace_back(std::string(name), std::string(value));
+    };
+    const auto kept = applyEnvOverrides(
+        defaultConfig(), fakeEnv({{"LUMINA_CAMERA_ROTATION", "45"}}), onInvalid);
+    CHECK(kept.cameraRotationDegrees == 90);
+    REQUIRE(invalid.size() == 1);
+    CHECK(invalid[0].first == "LUMINA_CAMERA_ROTATION");
+    CHECK(invalid[0].second == "45");
 }

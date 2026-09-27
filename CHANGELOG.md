@@ -3626,4 +3626,206 @@
     Rebuild host (ctest: new invalid-value + cacheReady tests) and aarch64; redeploy lumina.
     On device: confirm LUMINA_WARM_ONLY exits 0 with "cache '...' ready"; confirm a bad
     LUMINA_AUDIO_* value logs the new WARN. Face recognition must remain enabled.
+
+# ---------------------------------------------------------------------------
+# CHG-0100 — Let object narration dominate over the generic obstacle warning
+# ---------------------------------------------------------------------------
+- id: CHG-0100
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-001, INV-032, INV-070]
+  supersedes: null
+  summary: >-
+    Rebalanced the camera obstacle heuristic so the runtime names objects instead of
+    over-triggering the generic "obstáculo cerca." phrase. (1) Removed `person` (COCO 0) from
+    `obstacleClassIds` — people are now narrated ("una persona enfrente"); the other classes
+    (bicycle, car, bus, chair, couch, dining table) remain obstacles. (2) `buildSceneAlert` no longer
+    turns a Mid-distance obstacle-class object into an alert: only a Near in-path obstacle produces
+    the generic Warning, so Mid objects fall through to the multi-class description. (3) Narrowed
+    `pathCenterTolerance` 0.35 -> 0.25 so only genuinely centered objects count as hazards
+    (`nearAreaFraction` stays 0.20). (4) Extended config_env with float/CSV parsing and overrides
+    LUMINA_NEAR_AREA_FRACTION, LUMINA_MID_AREA_FRACTION, LUMINA_PATH_CENTER_TOLERANCE,
+    LUMINA_PROXIMITY_THRESHOLD_M, LUMINA_PROXIMITY_RELEASE_M and LUMINA_OBSTACLE_CLASSES. Updated
+    tests (test_scene, test_config, test_config_env), README and docs/PERFORMANCE.md.
+  rationale: >-
+    Reported on device: "obstáculo" dominated over "persona"/"mesa"/"silla"/"carro". Root cause was
+    the aggressive defaults (Mid fires at 6% frame area across the middle 70% of the width) plus
+    `person` being an obstacle class, so any person crossing center suppressed the description.
+    FR-02 only requires an alert for a near, centered obstacle, so dropping the Mid alert aligns
+    with the spec. Safety is preserved: a large centered hazard (car/bus/bicycle) still raises the
+    camera Warning, and the class-agnostic IR channel still fires the Safety phrase at <=
+    proximityThresholdM (INV-032 unchanged). The showcase now demonstrates object distinction and a
+    real imminent-collision safety channel. `midAreaFraction` is retained in Config but no longer
+    affects alerts.
+  files:
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/app/scene.hpp
+    - Lumina-BETA-RPI-2W/src/app/scene.cpp
+    - Lumina-BETA-RPI-2W/src/core/config_env.hpp
+    - Lumina-BETA-RPI-2W/src/core/config_env.cpp
+    - Lumina-BETA-RPI-2W/tests/test_scene.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config_env.cpp
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/docs/PERFORMANCE.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host (ctest: updated test_scene + new config_env parsing tests) and aarch64; redeploy
+    lumina. On device, confirm a person is narrated and only a large centered vehicle (or an IR hit
+    under 0.8 m) says "cuidado, obstáculo cerca."; optionally sweep the new env vars to taste.
+
+# ---------------------------------------------------------------------------
+# CHG-0101 — Rotate the camera frames upright (physical mount correction)
+# ---------------------------------------------------------------------------
+- id: CHG-0101
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-001, INV-020, INV-070]
+  supersedes: null
+  summary: >-
+    The camera is physically mounted rotated in the glasses, so libcamera delivered sideways frames
+    and object/face recognition broke. Added src/core/frame_transform.{hpp,cpp} with a pure
+    rotateFrame() (clockwise 0/90/180/270, honours stride, non-RGB/unsupported angles returned
+    unchanged) and encodePpm() (diagnostic). LibcameraConfig gained rotationDegrees (default 90) and
+    Impl::convert() now rotates each frame, so the runtime, lumina_enroll --camera and
+    lumina_capture_test all see upright frames. core::Config gained cameraRotationDegrees (default
+    90, clamped to the four right angles) with the LUMINA_CAMERA_ROTATION env override;
+    main.cpp/enroll_face.cpp/capture_probe.cpp copy it into LibcameraConfig. lumina_capture_test
+    gained --dump <file.ppm> to save one corrected frame for visual angle confirmation. Added
+    tests/test_frame_transform.cpp and config/env tests; updated README and docs/PI_RUNBOOK.md §9c.
+  rationale: >-
+    Diagnosed by the user: rotating the camera 90 degrees clockwise for the glasses frame broke
+    recognition, and restoring the old orientation fixed it. Rotating in software is guaranteed to
+    work on any pipeline and preserves the full sensor FOV (the detector letterboxes a portrait
+    frame; the face path downscales by longest side). Rotation preserves frame area, so the obstacle
+    area thresholds stay calibrated. The default 90 matches the final mount; the env override and
+    the PPM dump let the operator confirm/flip the direction on device. libcamera's hardware
+    orientation was not used because its RPi 90/270 support and FOV/crop behavior are uncertain.
+  files:
+    - Lumina-BETA-RPI-2W/src/core/frame_transform.hpp
+    - Lumina-BETA-RPI-2W/src/core/frame_transform.cpp
+    - Lumina-BETA-RPI-2W/src/capture/libcamera_source.hpp
+    - Lumina-BETA-RPI-2W/src/capture/libcamera_source.cpp
+    - Lumina-BETA-RPI-2W/src/core/config.hpp
+    - Lumina-BETA-RPI-2W/src/core/config_env.hpp
+    - Lumina-BETA-RPI-2W/src/core/config_env.cpp
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/src/tools/enroll_face.cpp
+    - Lumina-BETA-RPI-2W/src/tools/capture_probe.cpp
+    - Lumina-BETA-RPI-2W/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/test_frame_transform.cpp
+    - Lumina-BETA-RPI-2W/tests/CMakeLists.txt
+    - Lumina-BETA-RPI-2W/tests/test_config.cpp
+    - Lumina-BETA-RPI-2W/tests/test_config_env.cpp
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/docs/PI_RUNBOOK.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild host (ctest: new frame_transform tests) and aarch64; redeploy lumina, lumina_enroll and
+    lumina_capture_test. On device run `LUMINA_CAMERA_ROTATION=90 ./lumina_capture_test 640 480 5
+    --dump /tmp/frame.ppm`, scp and confirm upright (use 270 if inverted), then confirm narration
+    and face recognition. Optionally bake the value into both unit files.
+
+# ---------------------------------------------------------------------------
+# CHG-0102 — capture probe: warm up before --dump (first frames are black)
+# ---------------------------------------------------------------------------
+- id: CHG-0102
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: fix
+  status: applied
+  invariants: [INV-001, INV-070]
+  supersedes: null
+  summary: >-
+    lumina_capture_test --dump saved the very first delivered frame, which on the vc4 pipeline is a
+    startup frame captured before auto-exposure converges and is therefore black. --dump now keeps
+    capturing until --warmup seconds (default 2) have elapsed and saves the newest frame; a new
+    --warmup flag overrides the delay. dumpPpm() also prints the frame's RGB byte mean/min/max so a
+    black (near-zero mean) frame is obvious in the text output. Updated docs/PI_RUNBOOK.md §9c.
+  rationale: >-
+    Reported on device: the dumped PPM was entirely black. The probe log showed RGB888 at 480x640
+    (rotation working) but only 5 frames in 214 ms, i.e. the dump happened ~0.2 s after start, before
+    AE/AWB had converged (libcamera tags those frames FrameStartup, which convert() does not expose).
+    Warming up before dumping makes the diagnostic reliable without carrying libcamera's frame status
+    through the capture layer. The mean/min/max printout distinguishes "black frame" from "wrong
+    format/rotation" at a glance.
+  files:
+    - Lumina-BETA-RPI-2W/src/tools/capture_probe.cpp
+    - Lumina-BETA-RPI-2W/docs/PI_RUNBOOK.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild aarch64 and redeploy lumina_capture_test. On device run
+    `LUMINA_CAMERA_ROTATION=90 ./lumina_capture_test 640 480 30 --dump /tmp/frame.ppm`, confirm the
+    printed mean is not ~0, convert the PPM (magick frame.ppm frame.png) and confirm the scene is
+    upright; use 270 if inverted.
+
+# ---------------------------------------------------------------------------
+# CHG-0103 — Prewarm every person-containing sentence up to 10
+# ---------------------------------------------------------------------------
+- id: CHG-0103
+  date: 2026-09-22
+  agent: opencode/deepseek-v4-flash
+  type: impl
+  status: applied
+  invariants: [INV-001, INV-051, INV-070]
+  supersedes: null
+  summary: >-
+    main.cpp now also warms every sentence that names a person with a count up to 10:
+    the single-class "una..diez personas enfrente." and, for each of the 9 other narrated
+    classes, the person x other two-class phrases for person count 1..10 and other count 1..10 in
+    the describeDetections order (higher count first; ties keep person first). ~910 new phrases on
+    top of the existing catalog (30 single-class + 180 two-class + 2 alerts + greetings). Added an
+    explicit #include "i18n/es.hpp" for ObjectClass/fromCocoId. No runtime behaviour change; the
+    extra phrases are disk-cached and streamed.
+  rationale: >-
+    On-device demo: a crowd of up to 10 people produced "obstáculo"/counts beyond the default
+    prewarm (single-class 1..3, two-class 1..2), so the crowd sentence was a multi-second live
+    Piper synthesis. Prewarming the person set makes it a cache hit. The cache is disk-backed and
+    streamed in 1024-frame chunks (caching_tts.cpp), so a larger cache has no runtime RAM/CPU cost;
+    only the one-time render time (~910 phrases at ~1.5-2.5 s each for es_MX-claude-high) and disk
+    (~150-200 KB/phrase) grow. Warm time was accepted by the user.
+  files:
+    - Lumina-BETA-RPI-2W/src/main.cpp
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    Rebuild aarch64 and redeploy lumina. Pre-render once with
+    `cd ~/lumina && LUMINA_WARM_ONLY=1 ./lumina models/yolo11n_ncnn_320x256
+    models/voices/es_MX-claude-high.onnx espeak-ng-data` (do not restart the service until it
+    finishes), then restart lumina; a second LUMINA_WARM_ONLY run should report 0 new.
+
+# ---------------------------------------------------------------------------
+# CHG-0104 — Archive: final-state README + contest banner
+# ---------------------------------------------------------------------------
+- id: CHG-0104
+  date: 2026-09-26
+  agent: opencode/deepseek-v4-flash
+  type: docs
+  status: applied
+  invariants: [INV-070]
+  supersedes: null
+  summary: >-
+    Rewrote README.md as the archival final-state document: an "Archived — built for the Innovatec
+    2026 (InnovaTecNM) contest" banner at the top, a Final state section (what shipped and was
+    verified on-device), a Known limitations section, and a Contest and outcome section (local stage,
+    did not advance). Replaced the beta Status note and the Roadmap with "What shipped / what was
+    deferred", and updated the license line to name the contest. No code changed.
+  rationale: >-
+    The event concluded and the project was not selected; the repository is being archived as a
+    reference. A future reader (or the team) needs an unambiguous, self-contained statement of what
+    the project was, what actually worked, what was deferred, and why the repo is frozen.
+  files:
+    - Lumina-BETA-RPI-2W/README.md
+    - Lumina-BETA-RPI-2W/CHANGELOG.md
+  approvals: [user]
+  follow_up: >-
+    None. This is the final entry for the archived runtime; the repository is set read-only on
+    GitHub.
 ```
